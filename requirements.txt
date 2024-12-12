@@ -1,0 +1,6 @@
+langchain
+transformers
+torch
+datasets
+evaluate
+scikit-learn
