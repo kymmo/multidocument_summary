@@ -2,5 +2,6 @@ langchain
 transformers
 torch
 datasets
-evaluate
 scikit-learn
+sentence_transformers
+spacy
