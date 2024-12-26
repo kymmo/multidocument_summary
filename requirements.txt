@@ -5,3 +5,10 @@ datasets
 scikit-learn
 sentence_transformers
 spacy
+tqdm
+rouge-score
+rouge
+PyTorch
+DGL
+pyrouge
+nltk

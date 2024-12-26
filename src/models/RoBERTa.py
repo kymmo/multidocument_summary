@@ -38,7 +38,10 @@ class SingleDocSummarizerBERT:
           nlp = spacy.load("en_core_web_md")
           doc = nlp(self.document)
           sentences = [sent.text.strip() for sent in doc.sents]
-                    
+          
+          ### TODO: num_sentences and num_clusters need to be dynamic
+          ### TODO: to score sentences with a model, like BERT
+          
           if not sentences:
                return []
 
@@ -90,5 +93,5 @@ class SingleDocSummarizerBERT:
      
      def evaluate(self):
           #### TODO: to evaluate the model using SDS dataset.
-          #### may be need smaller grainy to make senseable output
+          #### may be need smaller granularity to make sensible output
           return
