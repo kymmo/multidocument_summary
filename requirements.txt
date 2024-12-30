@@ -8,7 +8,6 @@ spacy
 tqdm
 rouge-score
 rouge
-PyTorch
 DGL
 pyrouge
 nltk
