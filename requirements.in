@@ -1,0 +1,8 @@
+spacy
+keybert
+coreferee
+transformers
+dgl
+torch
+rouge
+matplotlib

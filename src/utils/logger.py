@@ -1,15 +1,10 @@
-# -*- coding: utf-8 -*-
-
 import logging
-import sys
 
-logger = logging.getLogger("Summarization logger")
+logging.basicConfig(
+     level=logging.INFO,
+     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s - %(filename)s:%(lineno)d'
+)
 
-formatter = logging.Formatter('%(asctime)s %(levelname)-8s: %(message)s')
-
-console_handler = logging.StreamHandler(sys.stdout)
-console_handler.formatter = formatter 
-console_handler.setLevel(logging.INFO)
-logger.addHandler(console_handler)
-
-logger.setLevel(logging.DEBUG)
+def log_preprocess_info(method, status):
+     ''' status: start; finish '''
+     logging.info(f"Function {method} is {status}")
