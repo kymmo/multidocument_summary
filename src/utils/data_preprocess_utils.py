@@ -4,12 +4,14 @@ from keybert import KeyBERT
 import coreferee
 import utils.Logger as mylogger
 from collections import defaultdict
+from sentence_transformers import SentenceTransformer
 
 # Load models - this should be done only once
 nlp_sm = spacy.load("en_core_web_sm")
 nlp_coref = spacy.load("en_core_web_lg")
 nlp_coref.add_pipe('coreferee')
 kw_model = KeyBERT()
+sentBERT_model = SentenceTransformer('all-MiniLM-L6-v2')
 
 def load_jsonl(file_path):
      """  Loads data from a JSONL file with the correct multi-document format.
@@ -117,14 +119,14 @@ def coref_resolve(documents_list):
      return coref_docs_list
 
 
-def define_node_edge(documents_list):
+def define_node_edge(documents_list, edge_similarity_threshold = 0.6):
      """_summary_ index node, including word and sentence; define all types of edges
 
      Args:
           documents_list (_type_): original docs
 
      Returns:
-          _type_:  word_node_map, sent_node_map, edge list
+          _type_:  word_node_map, sent_node_map, edge list, sentid_nodeid_map
      """
      docs_sents_list = split_sentences(documents_list)
      docs_kws_scores_list = extract_keywords(documents_list)
@@ -133,6 +135,7 @@ def define_node_edge(documents_list):
      edge_data_list = []
      word_node_list = []
      sent_node_list = []
+     sentId_nodeId_list = []
      for training_idx, (docs_sentences, docs_kws_scores, docs_corefs) in enumerate(zip(docs_sents_list, docs_kws_scores_list, docs_corefs_list)):
           node_index = 0
           
@@ -180,11 +183,22 @@ def define_node_edge(documents_list):
           
           ## 3. similarity
           for doc_idx, sents in enumerate(docs_sentences):
-               for sent_id, sent in enumerate(sents):
-                    print("####PLACEHOLDER:: TODO ##########")
+               sent_embeddings = sentBERT_model.encode(sents)
+               similarities_matrix = sentBERT_model.similarity(sent_embeddings, sent_embeddings)
+               
+               n = len(sent_embeddings)
+               for i in range(n):
+                    for j in range(n):
+                         if j < i and similarities_matrix[i][j] >= edge_similarity_threshold:
+                              node_i = sentId_nodeId_map[(training_idx, doc_idx, i)]
+                              node_j = sentId_nodeId_map[(training_idx, doc_idx, j)]
+                              
+                              add_edge(node_i, node_j, "similarity", weight=similarities_matrix[i][j])
+          
           
           edge_data_list.append(edge_data)
           word_node_list.append(word_nodeId_map)
           sent_node_list.append(sent_nodeId_map)
+          sentId_nodeId_list.append(sentId_nodeId_map)
      
-     return word_node_list, sent_node_list, edge_data_list
+     return word_node_list, sent_node_list, edge_data_list, sentId_nodeId_list

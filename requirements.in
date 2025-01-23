@@ -6,3 +6,5 @@ dgl
 torch
 rouge
 matplotlib
+sentencepiece
+datasets

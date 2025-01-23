@@ -4,6 +4,18 @@
 #
 #    pip-compile requirements.in
 #
+aiohappyeyeballs==2.4.4
+    # via aiohttp
+aiohttp==3.11.11
+    # via
+    #   datasets
+    #   fsspec
+aiosignal==1.3.2
+    # via aiohttp
+async-timeout==5.0.1
+    # via aiohttp
+attrs==24.3.0
+    # via aiohttp
 blis==0.7.11
     # via thinc
 catalogue==2.0.10
@@ -24,31 +36,53 @@ colorama==0.4.6
     #   wasabi
 confection==0.1.5
     # via thinc
+contourpy==1.3.0
+    # via matplotlib
 coreferee==1.4.1
     # via -r requirements.in
+cycler==0.12.1
+    # via matplotlib
 cymem==2.0.10
     # via
     #   preshed
     #   spacy
     #   thinc
+datasets==2.14.4
+    # via -r requirements.in
 dgl==2.2.1
     # via -r requirements.in
+dill==0.3.7
+    # via
+    #   datasets
+    #   multiprocess
 filelock==3.16.1
     # via
     #   huggingface-hub
     #   torch
     #   transformers
-fsspec==2024.12.0
+fonttools==4.55.4
+    # via matplotlib
+frozenlist==1.5.0
     # via
+    #   aiohttp
+    #   aiosignal
+fsspec[http]==2024.12.0
+    # via
+    #   datasets
     #   huggingface-hub
     #   torch
 huggingface-hub==0.27.1
     # via
+    #   datasets
     #   sentence-transformers
     #   tokenizers
     #   transformers
 idna==3.10
-    # via requests
+    # via
+    #   requests
+    #   yarl
+importlib-resources==6.5.2
+    # via matplotlib
 jinja2==3.1.5
     # via
     #   spacy
@@ -57,6 +91,8 @@ joblib==1.4.2
     # via scikit-learn
 keybert==0.8.5
     # via -r requirements.in
+kiwisolver==1.4.7
+    # via matplotlib
 langcodes==3.5.0
     # via spacy
 language-data==1.3.0
@@ -67,10 +103,18 @@ markdown-it-py==3.0.0
     # via rich
 markupsafe==3.0.2
     # via jinja2
+matplotlib==3.9.4
+    # via -r requirements.in
 mdurl==0.1.2
     # via markdown-it-py
 mpmath==1.3.0
     # via sympy
+multidict==6.1.0
+    # via
+    #   aiohttp
+    #   yarl
+multiprocess==0.70.15
+    # via datasets
 murmurhash==1.0.11
     # via
     #   preshed
@@ -83,8 +127,11 @@ networkx==3.2.1
 numpy==1.26.4
     # via
     #   blis
+    #   contourpy
+    #   datasets
     #   dgl
     #   keybert
+    #   matplotlib
     #   pandas
     #   scikit-learn
     #   scipy
@@ -93,24 +140,36 @@ numpy==1.26.4
     #   transformers
 packaging==24.2
     # via
+    #   datasets
     #   huggingface-hub
+    #   matplotlib
     #   spacy
     #   thinc
     #   transformers
 pandas==2.2.3
-    # via dgl
+    # via
+    #   datasets
+    #   dgl
 pathlib-abc==0.1.1
     # via pathy
 pathy==0.11.0
     # via spacy
 pillow==11.1.0
-    # via sentence-transformers
+    # via
+    #   matplotlib
+    #   sentence-transformers
 preshed==3.0.9
     # via
     #   spacy
     #   thinc
+propcache==0.2.1
+    # via
+    #   aiohttp
+    #   yarl
 psutil==6.1.1
     # via dgl
+pyarrow==19.0.0
+    # via datasets
 pydantic==1.10.20
     # via
     #   confection
@@ -118,18 +177,24 @@ pydantic==1.10.20
     #   thinc
 pygments==2.19.1
     # via rich
+pyparsing==3.2.1
+    # via matplotlib
 python-dateutil==2.9.0.post0
-    # via pandas
+    # via
+    #   matplotlib
+    #   pandas
 pytz==2024.2
     # via pandas
 pyyaml==6.0.2
     # via
+    #   datasets
     #   huggingface-hub
     #   transformers
 regex==2024.11.6
     # via transformers
 requests==2.32.3
     # via
+    #   datasets
     #   dgl
     #   huggingface-hub
     #   spacy
@@ -152,6 +217,8 @@ scipy==1.13.1
     #   sentence-transformers
 sentence-transformers==3.3.1
     # via keybert
+sentencepiece==0.2.0
+    # via -r requirements.in
 six==1.17.0
     # via
     #   python-dateutil
@@ -190,6 +257,7 @@ torchdata==0.10.1
     # via dgl
 tqdm==4.67.1
     # via
+    #   datasets
     #   dgl
     #   huggingface-hub
     #   sentence-transformers
@@ -206,6 +274,7 @@ typer==0.7.0
 typing-extensions==4.12.2
     # via
     #   huggingface-hub
+    #   multidict
     #   pydantic
     #   rich
     #   torch
@@ -219,6 +288,12 @@ wasabi==1.1.3
     # via
     #   spacy
     #   thinc
+xxhash==3.5.0
+    # via datasets
+yarl==1.18.3
+    # via aiohttp
+zipp==3.21.0
+    # via importlib-resources
 
 # The following packages are considered to be unsafe in a requirements file:
 # setuptools
