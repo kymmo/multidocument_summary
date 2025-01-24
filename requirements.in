@@ -2,8 +2,7 @@ spacy
 keybert
 coreferee
 transformers
-dgl
-torch
+torch-geometric
 rouge
 matplotlib
 sentencepiece

@@ -2,6 +2,7 @@ import json
 import spacy
 from keybert import KeyBERT
 import coreferee
+import torch
 import utils.Logger as mylogger
 from collections import defaultdict
 from sentence_transformers import SentenceTransformer
@@ -160,6 +161,8 @@ def define_node_edge(documents_list, edge_similarity_threshold = 0.6):
           
           edge_data = defaultdict(list)
           def add_edge(node1_idx, node2_idx, edge_type, weight=1):
+               if torch.is_tensor(weight):
+                    weight = weight.detach().item()
                edge_data[(node1_idx, node2_idx)].append({'type': edge_type, 'weight': weight})
                
           ## 1. word-sentence

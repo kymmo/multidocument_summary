@@ -1,12 +1,29 @@
 import networkx as nx
 import torch
 from transformers import BertTokenizer, BertModel, BertConfig
+from torch_geometric.data import HeteroData
 
 
-from utils.data_preprocess_utils import define_node_edge
+from utils.data_preprocess_utils import define_node_edge, load_jsonl
 
 bert_tokenizer = BertTokenizer.from_pretrained("bert-base-uncased")
 bert_model = BertModel.from_pretrained("bert-base-uncased")
+
+def get_embed_graph(file_path):
+     docs_list = load_jsonl(file_path)
+     sample_graphs = create_embed_graphs(docs_list)
+     
+     return sample_graphs
+
+
+def create_embed_graphs(docs_list, sent_similarity = 0.6):
+     word_nodeId_list, sent_nodeId_list, edge_data_list,sentid_node_map_list = define_node_edge(docs_list, sent_similarity)
+     graph_list = create_graph(word_nodeId_list, sent_nodeId_list, edge_data_list)
+     embedded_graph_list = embed_nodes(graph_list, sentid_node_map_list)
+     pyg_graph_list = convert_graph_from_nx_to_pyg(embedded_graph_list)
+     
+     return pyg_graph_list
+
 
 def create_graph(word_nodeId_list, sent_nodeId_list, edge_data_list):
      graph_list = []
@@ -30,6 +47,7 @@ def create_graph(word_nodeId_list, sent_nodeId_list, edge_data_list):
      
      return graph_list
 
+
 def embed_nodes(graphs, sentid_node_map_list):
      """Embeds nodes in the graph using SBERT, BERT, and positional embeddings."""
      embedded_graphs = []
@@ -39,7 +57,7 @@ def embed_nodes(graphs, sentid_node_map_list):
           for node, data in graph.nodes(data = True):
                if data["type"] == "sentence":
                     with torch.no_grad():
-                         graph.nodes[node]['embedding'] = sent_node_embedding_map[node]
+                         graph.nodes[node]['embedding'] = sent_node_embedding_map[node].detach()
                if data["type"] == "word":
                     with torch.no_grad():
                          bert_tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
@@ -91,3 +109,68 @@ def get_sent_positional_encoding(sentid_node_map_list):
           sent_pos_emb_list.append(sent_node_emb_map)
      
      return sent_pos_emb_list
+
+
+def convert_graph_from_nx_to_pyg(graphs):
+     hetro_graphs = []
+     for nx_graph in graphs:
+          het_graph = HeteroData()
+          
+          word_node_map = {}
+          sent_id = 0
+          word_id = 0
+          word_nodes = []
+          sent_nodes = []
+          for node in nx_graph.nodes():
+               cur_type = nx_graph.nodes[node]['type']
+               embed = nx_graph.nodes[node]['embedding']
+               if cur_type == 'word':
+                    word_nodes.append(embed)
+                    word_node_map[node] = ('word', word_id)
+                    word_id = word_id + 1
+               elif cur_type == 'sentence':
+                    sent_nodes.append(embed)
+                    word_node_map[node] = ('sentence', sent_id)
+                    sent_id = sent_id + 1
+          het_graph['word'].x = torch.stack(word_nodes)
+          het_graph['sentence'].x = torch.stack(sent_nodes)
+          
+          similarity_edge_indices = []
+          similarity_edge_attrs = []
+          pro_ant_edge_indices = []
+          pro_ant_edge_attrs = []
+          sent_word_edge_indices = []
+          sent_word_edge_attrs = []
+          word_sent_edge_indices = []
+          word_sent_edge_attrs = []
+          for from_node, to_node, k, attr in nx_graph.edges(keys=True, data=True):
+               node_type_from, new_id_from = word_node_map[from_node]
+               node_type_to, new_id_to = word_node_map[to_node]
+               edge_tp = attr['edge_type']
+               weight = attr['weight']
+               if edge_tp == 'word_sent':
+                    if node_type_from == 'sentence':
+                         sent_word_edge_indices.append([new_id_from, new_id_to])
+                         sent_word_edge_attrs.append([weight])
+                    else:
+                         word_sent_edge_indices.append([new_id_from, new_id_to])
+                         word_sent_edge_attrs.append([weight])
+               elif edge_tp == 'pronoun_antecedent':
+                    pro_ant_edge_indices.append([new_id_from, new_id_to])
+                    pro_ant_edge_attrs.append([weight])
+               elif edge_tp == 'similarity':
+                    similarity_edge_indices.append([new_id_from, new_id_to])
+                    similarity_edge_attrs.append([weight])
+          
+          het_graph['sentence', 'similarity', 'sentence'].edge_index = torch.tensor(similarity_edge_indices).t()
+          het_graph['sentence', 'similarity', 'sentence'].edge_attr = torch.tensor(similarity_edge_attrs)
+          het_graph['sentence', 'pro_ant', 'sentence'].edge_index = torch.tensor(pro_ant_edge_indices).t()
+          het_graph['sentence', 'pro_ant', 'sentence'].edge_attr = torch.tensor(pro_ant_edge_attrs)
+          het_graph['sentence', 'has', 'word'].edge_index = torch.tensor(sent_word_edge_indices).t()
+          het_graph['sentence', 'has', 'word'].edge_attr = torch.tensor(sent_word_edge_attrs)
+          het_graph['word', 'in', 'sentence'].edge_index = torch.tensor(word_sent_edge_indices).t()
+          het_graph['word', 'in', 'sentence'].edge_attr = torch.tensor(sent_word_edge_attrs)
+          
+          hetro_graphs.append(het_graph)
+     
+     return hetro_graphs
