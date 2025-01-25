@@ -3,7 +3,6 @@ import spacy
 from keybert import KeyBERT
 import coreferee
 import torch
-import utils.Logger as mylogger
 from collections import defaultdict
 from sentence_transformers import SentenceTransformer
 
@@ -23,7 +22,7 @@ def load_jsonl(file_path):
           for line in f:
                try:
                     data = json.loads(line)
-                    documents_list.append(data['text']) # Each line is a list of documents
+                    documents_list.append(data['document']) # Each line is a list of documents
                except json.JSONDecodeError:
                     print(f"Skipping invalid JSON line: {line}")
      return documents_list
