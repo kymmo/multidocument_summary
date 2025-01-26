@@ -167,6 +167,8 @@ propcache==0.2.1
     # via
     #   aiohttp
     #   yarl
+protobuf==5.29.3
+    # via -r requirements.in
 psutil==6.1.1
     # via torch-geometric
 pyarrow==19.0.0
@@ -217,7 +219,9 @@ scipy==1.13.1
     #   scikit-learn
     #   sentence-transformers
 sentence-transformers==3.3.1
-    # via keybert
+    # via
+    #   -r requirements.in
+    #   keybert
 sentencepiece==0.2.0
     # via -r requirements.in
 six==1.17.0

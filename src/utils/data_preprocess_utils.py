@@ -7,7 +7,7 @@ from collections import defaultdict
 from sentence_transformers import SentenceTransformer
 
 # Load models - this should be done only once
-nlp_sm = spacy.load("en_core_web_sm")
+nlp_sm = spacy.load("en_core_web_lg")
 nlp_coref = spacy.load("en_core_web_lg")
 nlp_coref.add_pipe('coreferee')
 kw_model = KeyBERT()

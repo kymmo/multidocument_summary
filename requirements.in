@@ -2,8 +2,10 @@ spacy
 keybert
 coreferee
 transformers
+sentence_transformers
 torch-geometric
 rouge
 matplotlib
 sentencepiece
 datasets
+protobuf

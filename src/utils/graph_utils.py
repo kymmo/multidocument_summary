@@ -11,19 +11,24 @@ bert_model = BertModel.from_pretrained("bert-base-uncased")
 
 def get_embed_graph(file_path):
      docs_list = load_jsonl(file_path)
-     sample_graphs = create_embed_graphs(docs_list)
+     sample_graphs, node_maps = create_embed_graphs(docs_list)
      
      return sample_graphs
 
+def get_embed_graph_node_map(file_path):
+     docs_list = load_jsonl(file_path)
+     sample_graphs, node_maps = create_embed_graphs(docs_list)
+     
+     return sample_graphs, node_maps
 
 def create_embed_graphs(docs_list, sent_similarity = 0.6):
      word_nodeId_list, sent_nodeId_list, edge_data_list,sentid_node_map_list = define_node_edge(docs_list, sent_similarity)
      graph_list = create_graph(word_nodeId_list, sent_nodeId_list, edge_data_list)
      embedded_graph_list = embed_nodes(graph_list, sentid_node_map_list)
-     pyg_graph_list = convert_graph_from_nx_to_pyg(embedded_graph_list)
+     pyg_graph_list, nodeid_to_sent_map_list = convert_graph_from_nx_to_pyg(embedded_graph_list)
+     node_sent_map_list = get_node_sent_map(embedded_graph_list, nodeid_to_sent_map_list) ## id -> sent
      
-     return pyg_graph_list
-
+     return pyg_graph_list, node_sent_map_list
 
 def create_graph(word_nodeId_list, sent_nodeId_list, edge_data_list):
      graph_list = []
@@ -46,7 +51,6 @@ def create_graph(word_nodeId_list, sent_nodeId_list, edge_data_list):
           graph_list.append(graph)
      
      return graph_list
-
 
 def embed_nodes(graphs, sentid_node_map_list):
      """Embeds nodes in the graph using SBERT, BERT, and positional embeddings."""
@@ -71,7 +75,6 @@ def embed_nodes(graphs, sentid_node_map_list):
 
           embedded_graphs.append(graph)
      return embedded_graphs
-
 
 def get_sent_positional_encoding(sentid_node_map_list):
      sent_pos_emb_list = []
@@ -110,13 +113,14 @@ def get_sent_positional_encoding(sentid_node_map_list):
      
      return sent_pos_emb_list
 
-
 def convert_graph_from_nx_to_pyg(graphs):
      hetro_graphs = []
+     nodeid_to_sent_txt_map_list = []
+     
      for nx_graph in graphs:
           het_graph = HeteroData()
+          node_map = {}
           
-          word_node_map = {}
           sent_id = 0
           word_id = 0
           word_nodes = []
@@ -126,11 +130,11 @@ def convert_graph_from_nx_to_pyg(graphs):
                embed = nx_graph.nodes[node]['embedding']
                if cur_type == 'word':
                     word_nodes.append(embed)
-                    word_node_map[node] = ('word', word_id)
+                    node_map[node] = ('word', word_id)
                     word_id = word_id + 1
                elif cur_type == 'sentence':
                     sent_nodes.append(embed)
-                    word_node_map[node] = ('sentence', sent_id)
+                    node_map[node] = ('sentence', sent_id)
                     sent_id = sent_id + 1
           het_graph['word'].x = torch.stack(word_nodes)
           het_graph['sentence'].x = torch.stack(sent_nodes)
@@ -144,8 +148,8 @@ def convert_graph_from_nx_to_pyg(graphs):
           word_sent_edge_indices = []
           word_sent_edge_attrs = []
           for from_node, to_node, k, attr in nx_graph.edges(keys=True, data=True):
-               node_type_from, new_id_from = word_node_map[from_node]
-               node_type_to, new_id_to = word_node_map[to_node]
+               node_type_from, new_id_from = node_map[from_node]
+               node_type_to, new_id_to = node_map[to_node]
                edge_tp = attr['edge_type']
                weight = attr['weight']
                if edge_tp == 'word_sent':
@@ -172,5 +176,28 @@ def convert_graph_from_nx_to_pyg(graphs):
           het_graph['word', 'in', 'sentence'].edge_attr = torch.tensor(sent_word_edge_attrs)
           
           hetro_graphs.append(het_graph)
+          nodeid_to_sent_txt_map_list.append(node_map)
      
-     return hetro_graphs
+     return hetro_graphs, nodeid_to_sent_txt_map_list
+
+def get_node_sent_map(original_graph_list, original_new_map_list):
+     """_summary_ get the node in new pyg graph corresponding sentence text. to do summarization in T5.
+
+     Args:
+          original_graph_list (_type_): networkx graph list
+          original_new_map_list (_type_): nx graph id to pyg hetro graph, id -> (node type, node id)
+     """
+     node_sent_map_list = []
+     for (ori_graph, ori_new_map) in zip(original_graph_list, original_new_map_list):
+          node_sent_map = {}
+          for old_node in ori_graph.nodes():
+               attributes = ori_graph.nodes[old_node]
+               if not attributes['type'] == 'sentence': continue
+               
+               sent_txt = attributes['text'][2] ## only sentence text needed
+               new_node_type, new_node_id = ori_new_map[old_node]
+               node_sent_map[new_node_id] = sent_txt
+          
+          node_sent_map_list.append(node_sent_map)
+          
+     return node_sent_map_list

@@ -8,11 +8,8 @@ lt5_model = (
      .half()
 )
 
-def t5_fine_tune(sent_rel_embeddings, docs_list):
-     # TODO load trained GNN to get corresponding embeddings
-     # model = GATModel(in_channels=16, out_channels=2)
-     # model.load_state_dict(torch.load("gat_model.pth"))
-     # model.eval()
+def t5_fine_tune(gnn_sent_embeddings, node_sent_maps):
+     
      
      inputs_dict = lt5_tokenizer(
           batch["article"], max_length=16384, padding="max_length", truncation=True, return_tensors="pt"
@@ -22,13 +19,8 @@ def t5_fine_tune(sent_rel_embeddings, docs_list):
      output_ids = lt5_model.generate(input_ids, attention_mask=attention_mask, max_length=512, num_beams=2)
      output = lt5_tokenizer.batch_decode(output_ids, skip_special_tokens=True)
      
-     # TODO: freeze param
-     # for param in model.encoder.block[:6].parameters():
-     # param.requires_grad = False
-     # for param in model.decoder.block[:6].parameters():
-     # param.requires_grad = False
+     # TODO: adapter
      
-#      from transformers import Seq2SeqTrainingArguments
 
 
 # # 定义训练参数
