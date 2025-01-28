@@ -23,7 +23,14 @@ def train_gnn(file_path, hidden_size, out_size, num_heads,sentence_in_size = 768
      
      print(f"Start loading dataset...")
      train_dataset = SummaryDataset(file_path)
-     train_dataloader = geo_DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+     train_dataloader = geo_DataLoader(
+          train_dataset,
+          batch_size=batch_size,
+          shuffle=True,
+          num_workers=4,
+          pin_memory=True,
+          prefetch_factor=2
+          )
      print(f"Dataset load successfully!")
      
      gnn_model = RelHetGraph(hidden_size, out_size, num_heads, sentence_in_size, word_in_size , feat_drop, attn_drop).to(device)
