@@ -27,11 +27,12 @@ def model_train_and_eval_t5(dataset_path):
           batch_size=32
      )
      
+     print(f"Start evaluation...")
      eval_data_path = os.path.join(dataset_path, "evaluation.jsonl")
      gnn_output_embeddings, merged_node_map_list, merged_summary_list = get_gnn_trained_embedding(eval_data_path, hidden_size, out_size, num_heads,sentence_in_size = 768, word_in_size = 768, feat_drop=0.2, attn_drop=0.2, batch_size=32)
      generated_summary = get_t5_outputs(gnn_sent_embeddings=gnn_output_embeddings, sample_node_sent_maps=merged_node_map_list)
      scores = rouge_eval(merged_summary_list, generated_summary)
 
-     print("Finish. scores: ", scores)
+     print("Finish. Evaluation scores: ", scores)
      return scores
      

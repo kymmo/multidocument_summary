@@ -19,7 +19,7 @@ t5_model = T5ForConditionalGeneration.from_pretrained(base_model)
 def train_gnn(file_path, hidden_size, out_size, num_heads,sentence_in_size = 768, word_in_size = 768, learning_rate=0.001, num_epochs=20, feat_drop=0.2, attn_drop=0.2, batch_size=32):
      """Trains the HetGNN model using a proxy task."""
      device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-     print(f"Runing on {device}")
+     print(f"Task runing on {device}")
      
      print(f"Start loading dataset...")
      train_dataset = SummaryDataset(file_path)

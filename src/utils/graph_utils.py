@@ -13,14 +13,16 @@ sentBERT_model = SentenceTransformer('all-MiniLM-L6-v2')
 
 def get_embed_graph(file_path):
      docs_list, summary_list = load_jsonl(file_path)
+     print(f"Download finished. Creating embedding graph...")
      sample_graphs, node_maps = create_embed_graphs(docs_list)
-     
+     print(f"Finish graph creation")
      return sample_graphs
 
 def get_embed_graph_node_map(file_path):
      docs_list, summary_list = load_jsonl(file_path)
+     print(f"Download finished. Creating embedding graph and node mapping...")
      sample_graphs, node_maps = create_embed_graphs(docs_list)
-     
+     print(f"Finish graph creation")
      return sample_graphs, node_maps, summary_list
 
 def create_embed_graphs(docs_list, sent_similarity = 0.6):
