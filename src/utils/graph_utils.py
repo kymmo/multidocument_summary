@@ -1,5 +1,6 @@
 import networkx as nx
 import torch
+import time
 from transformers import BertTokenizer, BertModel, BertConfig
 from sentence_transformers import SentenceTransformer
 from torch_geometric.data import HeteroData
@@ -13,9 +14,11 @@ sentBERT_model = SentenceTransformer('all-MiniLM-L6-v2')
 
 def get_embed_graph(file_path):
      docs_list, summary_list = load_jsonl(file_path)
-     print(f"Download finished. Creating embedding graph...")
+     print("Download finished. Creating embedding graph...")
+     start = time.time()
      sample_graphs, node_maps = create_embed_graphs(docs_list)
-     print(f"Finish graph creation")
+     end = time.time()
+     print(f"Finish graph creation, time cost:  {end - start:.4f} s.")
      return sample_graphs
 
 def get_embed_graph_node_map(file_path):

@@ -7,7 +7,7 @@ from torch.utils.data import DataLoader as data_DataLoader
 from transformers import T5Tokenizer, T5ForConditionalGeneration
 
 from models.RelHetGraph import RelHetGraph
-from models.DatasetLoader import SummaryDataset, EvalDataset
+from models.DatasetLoader import SummaryDataset, EvalDataset, OptimizedDataset
 from utils.model_utils import freeze_model
 
 base_model = "google-t5/t5-base"
@@ -22,7 +22,7 @@ def train_gnn(file_path, hidden_size, out_size, num_heads,sentence_in_size = 768
      print(f"Task runing on {device}")
      
      print(f"Start loading dataset...")
-     train_dataset = SummaryDataset(file_path)
+     train_dataset = OptimizedDataset(file_path)
      train_dataloader = geo_DataLoader(
           train_dataset,
           batch_size=batch_size,
