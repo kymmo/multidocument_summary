@@ -18,14 +18,17 @@ def load_jsonl(file_path):
           Each line represents one sample to multi-doc summarization
      """
      documents_list = []
+     summary_list = []
      with open(file_path, 'r', encoding='utf-8') as f:
           for line in f:
                try:
                     data = json.loads(line)
                     documents_list.append(data['document']) # Each line is a list of documents
+                    summary_list.append(data['summary'])
                except json.JSONDecodeError:
                     print(f"Skipping invalid JSON line: {line}")
-     return documents_list
+     
+     return documents_list, summary_list
 
 
 def split_sentences(documents_list):

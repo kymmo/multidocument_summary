@@ -29,27 +29,15 @@ class RelHetGraph(nn.Module):
           self.feat_drop = nn.Dropout(feat_drop)
 
      def forward(self, g, sentence_feat, word_feat):
-          print("Initial sentence_feat:", sentence_feat)
-          print("Initial word_feat:", word_feat)
-          
-          h = {
+          h_initial = {
                'sentence': F.relu(self.lin_sent(sentence_feat)),
                'word': F.relu(self.lin_word(word_feat))
           }
-          
-          print("Initial h:", h)  # 打印初始的 h，检查是否包含 'sentence' 和 'word'
-          
-          h = self.conv1(h, g.edge_index_dict)
-          
-          print("After conv1:", h)  # 打印经过 conv1 后的 h
-          
+          h = self.conv1(h_initial, g.edge_index_dict)
+          # h = {k: h_val + h_initial[k] for k, h_val in h.items()}  # residential connect
           h = {k: self.feat_drop(h_val) for k, h_val in h.items()}  # dropout
-          print("After dropout:", h)  # 打印经过 dropout 后的 h
           
           h = {k: h_val.flatten(1) for k, h_val in h.items()}  # flatten the output
-          print("After flatten:", h)  # 打印经过 flatten 后的 h
-          
           h = self.conv2(h, g.edge_index_dict)
-          print("After conv2:", h)  # 打印经过 conv2 后的 h
           
           return h['sentence']

@@ -22,14 +22,15 @@ class SummaryDataset(Dataset):
 class EvalDataset(Dataset):
      def __init__(self, file_path):
           self.file_path = file_path
-          self.data, self.node_map = self._load_data(file_path)
+          self.data, self.node_map, self.summary_list = self._load_data(file_path)
 
      def _load_data(self, file_path):
-          embedded_graphs, node_maps = get_embed_graph_node_map(file_path) ## node_maps: sent_node_id-> sent_text
-          return embedded_graphs, node_maps
+          embedded_graphs, node_maps, summary_list = get_embed_graph_node_map(file_path) ## node_maps: sent_node_id-> sent_text
+          
+          return embedded_graphs, node_maps, summary_list
 
      def __len__(self):
           return len(self.data)
 
      def __getitem__(self, idx):
-          return self.data[idx], self.node_map[idx]
+          return self.data[idx], self.node_map[idx], self.summary_list[idx]

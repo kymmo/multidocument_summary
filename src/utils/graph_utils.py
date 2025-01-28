@@ -1,28 +1,30 @@
 import networkx as nx
 import torch
 from transformers import BertTokenizer, BertModel, BertConfig
+from sentence_transformers import SentenceTransformer
 from torch_geometric.data import HeteroData
-
+# from sklearn.decomposition import PCA
 
 from utils.data_preprocess_utils import define_node_edge, load_jsonl
 
 bert_tokenizer = BertTokenizer.from_pretrained("bert-base-uncased")
 bert_model = BertModel.from_pretrained("bert-base-uncased")
+sentBERT_model = SentenceTransformer('all-MiniLM-L6-v2')
 
 def get_embed_graph(file_path):
-     docs_list = load_jsonl(file_path)
+     docs_list, summary_list = load_jsonl(file_path)
      sample_graphs, node_maps = create_embed_graphs(docs_list)
      
      return sample_graphs
 
 def get_embed_graph_node_map(file_path):
-     docs_list = load_jsonl(file_path)
+     docs_list, summary_list = load_jsonl(file_path)
      sample_graphs, node_maps = create_embed_graphs(docs_list)
      
-     return sample_graphs, node_maps
+     return sample_graphs, node_maps, summary_list
 
 def create_embed_graphs(docs_list, sent_similarity = 0.6):
-     word_nodeId_list, sent_nodeId_list, edge_data_list,sentid_node_map_list = define_node_edge(docs_list, sent_similarity)
+     word_nodeId_list, sent_nodeId_list, edge_data_list, sentid_node_map_list = define_node_edge(docs_list, sent_similarity)
      graph_list = create_graph(word_nodeId_list, sent_nodeId_list, edge_data_list)
      embedded_graph_list = embed_nodes(graph_list, sentid_node_map_list)
      pyg_graph_list, nodeid_to_sent_map_list = convert_graph_from_nx_to_pyg(embedded_graph_list)
@@ -55,13 +57,22 @@ def create_graph(word_nodeId_list, sent_nodeId_list, edge_data_list):
 def embed_nodes(graphs, sentid_node_map_list):
      """Embeds nodes in the graph using SBERT, BERT, and positional embeddings."""
      embedded_graphs = []
-     sent_node_embedding_map_list = get_sent_positional_encoding(sentid_node_map_list)
+     sent_node_embedding_map_list = get_sent_pos_encoding(sentid_node_map_list)
      
      for (graph, sent_node_embedding_map) in zip(graphs, sent_node_embedding_map_list):
           for node, data in graph.nodes(data = True):
                if data["type"] == "sentence":
                     with torch.no_grad():
-                         graph.nodes[node]['embedding'] = sent_node_embedding_map[node].detach()
+                         positon_embeddings = sent_node_embedding_map[node].detach() ## (768)
+                         sent_text = graph.nodes[node]['text'][2]
+                         sent_embeddings = sentBERT_model.encode(sent_text) ##(384, )
+                         sent_embeddings = torch.from_numpy(sent_embeddings)
+                         ## mean value padding
+                         mean_value = sent_embeddings.mean()
+                         padding = torch.full((384,), mean_value) 
+                         combined_emb = torch.cat([sent_embeddings, padding], dim=0)
+                         
+                         graph.nodes[node]['embedding'] = positon_embeddings + combined_emb
                if data["type"] == "word":
                     with torch.no_grad():
                          bert_tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
@@ -76,7 +87,7 @@ def embed_nodes(graphs, sentid_node_map_list):
           embedded_graphs.append(graph)
      return embedded_graphs
 
-def get_sent_positional_encoding(sentid_node_map_list):
+def get_sent_pos_encoding(sentid_node_map_list):
      sent_pos_emb_list = []
      
      for sentid_node_map in sentid_node_map_list:
