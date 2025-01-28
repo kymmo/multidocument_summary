@@ -13,16 +13,19 @@ from utils.model_utils import freeze_model
 base_model = "google-t5/t5-base"
 small_model = "google-t5/t5-small" #for test
 # t5_tokenizer = T5Tokenizer.from_pretrained(small_model, legacy=False)
-t5_tokenizer = T5Tokenizer.from_pretrained(small_model)
-t5_model = T5ForConditionalGeneration.from_pretrained(small_model)
+t5_tokenizer = T5Tokenizer.from_pretrained(base_model)
+t5_model = T5ForConditionalGeneration.from_pretrained(base_model)
 
 def train_gnn(file_path, hidden_size, out_size, num_heads,sentence_in_size = 768, word_in_size = 768, learning_rate=0.001, num_epochs=20, feat_drop=0.2, attn_drop=0.2, batch_size=32):
      """Trains the HetGNN model using a proxy task."""
      device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+     print(f"Runing on {device}")
      
+     print(f"Start loading dataset...")
      train_dataset = SummaryDataset(file_path)
      train_dataloader = geo_DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
-
+     print(f"Dataset load successfully!")
+     
      gnn_model = RelHetGraph(hidden_size, out_size, num_heads, sentence_in_size, word_in_size , feat_drop, attn_drop).to(device)
      T5_embed_layer_projector = nn.Linear(out_size, t5_model.config.d_model).to(device) ## size needed: (batch_size, sequence_length, hidden_size)
      optimizer = torch.optim.Adam(list(gnn_model.parameters()) + list(T5_embed_layer_projector.parameters()), lr=learning_rate)
@@ -30,6 +33,7 @@ def train_gnn(file_path, hidden_size, out_size, num_heads,sentence_in_size = 768
      freeze_model(t5_model)
      t5_model.eval() ## no update for T5
      gnn_model.train() ## set to train mode
+     print(f"Setting finish. Start training epoch...")
      for epoch in range(num_epochs):
           total_loss = 0
           for batch in train_dataloader:

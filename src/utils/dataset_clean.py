@@ -2,6 +2,28 @@ from datasets import load_dataset
 import json
 import os
 
+def convert_wcep_file(input_file, output_file):
+     with open(input_file, "r", encoding="utf-8") as fin, \
+          open(output_file, "w", encoding="utf-8") as fout:
+
+          for line in fin:
+               # ignore empty line
+               if not line.strip():
+                    continue
+
+               try:
+                    data = json.loads(line)
+               
+                    # check if data exist
+                    if "document" in data and isinstance(data["document"], list):
+                         # convert to: ["a","d","f"] → [["a"],["d"],["f"]]
+                         data["document"] = [[item] for item in data["document"]]
+                    
+                    fout.write(json.dumps(data, ensure_ascii=False) + "\n")
+               
+               except json.JSONDecodeError:
+                    print(f"Ignore unvalid data line:  {line}")
+
 def multinews_clean(save_path):
      dataset = load_dataset("alexfabbri/multi_news")
      train_data = dataset["train"].map(preprocess_function2, batched=True)

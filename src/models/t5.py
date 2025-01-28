@@ -6,8 +6,8 @@ from transformers import T5Tokenizer, T5ForConditionalGeneration
 ## t5 model here must be the same structure as t5_model defined in gnn_train.py
 base_model = "google-t5/t5-base"
 small_model = "google-t5/t5-small" #for test
-t5_tokenizer = T5Tokenizer.from_pretrained(small_model)
-t5_model = T5ForConditionalGeneration.from_pretrained(small_model)
+t5_tokenizer = T5Tokenizer.from_pretrained(base_model)
+t5_model = T5ForConditionalGeneration.from_pretrained(base_model)
 
 def get_t5_outputs(gnn_sent_embeddings, sample_node_sent_maps, summary_length = 200, sequence_length = 512):
      sent_list = []
