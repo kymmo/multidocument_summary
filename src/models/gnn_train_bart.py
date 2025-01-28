@@ -12,8 +12,8 @@ from utils.model_utils import freeze_model
 
 large_model = "facebook/bart-large"
 small_model = "facebook/bart-base" #for test
-bart_tokenizer = BartTokenizer.from_pretrained(large_model)
-bart_model = BartForConditionalGeneration.from_pretrained(large_model)
+bart_tokenizer = BartTokenizer.from_pretrained(small_model)
+bart_model = BartForConditionalGeneration.from_pretrained(small_model)
 
 def train_gnn_bart_loss(file_path, hidden_size, out_size, num_heads,sentence_in_size = 768, word_in_size = 768, learning_rate=0.001, num_epochs=20, feat_drop=0.2, attn_drop=0.2, batch_size=32):
      """Trains the HetGNN model using a proxy task."""
