@@ -13,12 +13,12 @@ from utils.model_utils import freeze_model
 base_model = "google-t5/t5-base"
 small_model = "google-t5/t5-small" #for test
 # t5_tokenizer = T5Tokenizer.from_pretrained(small_model, legacy=False)
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 t5_tokenizer = T5Tokenizer.from_pretrained(base_model)
-t5_model = T5ForConditionalGeneration.from_pretrained(base_model)
+t5_model = T5ForConditionalGeneration.from_pretrained(base_model).to(device)
 
 def train_gnn(file_path, hidden_size, out_size, num_heads,sentence_in_size = 768, word_in_size = 768, learning_rate=0.001, num_epochs=20, feat_drop=0.2, attn_drop=0.2, batch_size=32):
      """Trains the HetGNN model using a proxy task."""
-     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
      print(f"Task runing on {device}")
      
      print(f"Start loading dataset...")
@@ -68,7 +68,7 @@ def train_gnn(file_path, hidden_size, out_size, num_heads,sentence_in_size = 768
                closest_token_ids = abs_diff.argmin(dim=1)  # (batch_size,)
                seq_length = reshape_embeddings.size(1)
                labels = closest_token_ids.unsqueeze(1).expand(-1, seq_length)  # (batch_size, seq_length)
-               labels = labels.long() # make sure long type
+               labels = labels.long().to(device)  # make sure long type and GPU calculation
 
                outputs = t5_model(inputs_embeds=reshape_embeddings, labels=labels)
                loss = outputs.loss ## cross-entropy
@@ -91,7 +91,6 @@ def train_gnn(file_path, hidden_size, out_size, num_heads,sentence_in_size = 768
      return gnn_model
 
 def get_gnn_trained_embedding(evl_data_path, hidden_size, out_size, num_heads,sentence_in_size = 768, word_in_size = 768, feat_drop=0.2, attn_drop=0.2, batch_size=32):
-     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
      ## must be the same para of the train model
      gnn_model = RelHetGraph(hidden_size, out_size, num_heads, sentence_in_size, word_in_size , feat_drop, attn_drop).to(device)
      gnn_model.load_state_dict(torch.load('gnn_trained_weights.pth', weights_only=True))

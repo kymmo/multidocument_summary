@@ -8,9 +8,10 @@ from torch_geometric.data import HeteroData
 
 from utils.data_preprocess_utils import define_node_edge, load_jsonl
 
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 bert_tokenizer = BertTokenizer.from_pretrained("bert-base-uncased")
-bert_model = BertModel.from_pretrained("bert-base-uncased")
-sentBERT_model = SentenceTransformer('all-MiniLM-L6-v2')
+bert_model = BertModel.from_pretrained("bert-base-uncased").to(device)
+sentBERT_model = SentenceTransformer('all-MiniLM-L6-v2').to(device)
 
 def get_embed_graph(file_path):
      docs_list, summary_list = load_jsonl(file_path)
@@ -31,7 +32,8 @@ def get_embed_graph_node_map(file_path):
 def create_embed_graphs(docs_list, sent_similarity = 0.6):
      word_nodeId_list, sent_nodeId_list, edge_data_list, sentid_node_map_list = define_node_edge(docs_list, sent_similarity)
      graph_list = create_graph(word_nodeId_list, sent_nodeId_list, edge_data_list)
-     embedded_graph_list = embed_nodes(graph_list, sentid_node_map_list)
+     # embedded_graph_list = embed_nodes(graph_list, sentid_node_map_list)
+     embedded_graph_list = embed_nodes_gpu(graph_list, sentid_node_map_list)
      pyg_graph_list, nodeid_to_sent_map_list = convert_graph_from_nx_to_pyg(embedded_graph_list)
      node_sent_map_list = get_node_sent_map(embedded_graph_list, nodeid_to_sent_map_list) ## id -> sent
      
@@ -44,20 +46,60 @@ def create_graph(word_nodeId_list, sent_nodeId_list, edge_data_list):
           ## create graph for each multi-doc training sample
           graph = nx.MultiDiGraph()
           
-          for word,w_node_id in word_node_map.items():
-               graph.add_node(w_node_id, type = "word", text = word)
-          
-          for sent,s_node_id in sent_node_map.items():
-               graph.add_node(s_node_id, type = "sentence", text = sent)
-     
-          for (node1, node2), edges in edges_data.items():
-               for edge in edges:
-                    graph.add_edge(node1, node2, edge_type=edge['type'], weight=edge['weight'] )
-                    graph.add_edge(node2, node1, edge_type=edge['type'], weight=edge['weight'] )
+          word_nodes = [(w_node_id, {"type": "word", "text": word}) for word, w_node_id in word_node_map.items()]
+          graph.add_nodes_from(word_nodes)
 
+          sent_nodes = [(s_node_id, {"type": "sentence", "text": sent}) for sent, s_node_id in sent_node_map.items()]
+          graph.add_nodes_from(sent_nodes)
+          
+          edges = []
+          for (node1, node2), edge_list in edges_data.items():
+               for edge in edge_list:
+                    edges.append((node1, node2, {"edge_type": edge["type"], "weight": edge["weight"]}))
+                    edges.append((node2, node1, {"edge_type": edge["type"], "weight": edge["weight"]}))
+
+          graph.add_edges_from(edges)
+          
           graph_list.append(graph)
      
      return graph_list
+
+def embed_nodes_gpu(graphs, sentid_node_map_list):
+     """Embeds nodes in the graph using SBERT, BERT, and positional embeddings."""
+     embedded_graphs = []
+     sent_node_embedding_map_list = get_sent_pos_encoding(sentid_node_map_list)
+
+     for graph, sent_node_embedding_map in zip(graphs, sent_node_embedding_map_list):
+          sentences = [data['text'][2] for node, data in graph.nodes(data=True) if data['type'] == 'sentence']
+          if sentences:
+               with torch.no_grad():
+                    # encode all sentences in a batch
+                    sent_embeddings = sentBERT_model.encode(sentences, convert_to_tensor=True, device=device)  # (num_sentences, 384)
+
+          sent_idx = 0
+          for node, data in graph.nodes(data=True):
+               if data['type'] == 'sentence':
+                    with torch.no_grad():
+                         position_embeddings = sent_node_embedding_map[node].to(device)  # (768)
+                         sent_embedding = sent_embeddings[sent_idx].to(device)  # (384,)
+                         sent_idx += 1
+
+                         # Combine embeddings
+                         pad_sent_emb = torch.cat([sent_embedding, torch.zeros(384, device=device)], dim=0)  # (768,)
+
+                         graph.nodes[node]['embedding'] = position_embeddings + pad_sent_emb
+
+               elif data['type'] == 'word':
+                    with torch.no_grad():
+                         word_tokens = bert_tokenizer(graph.nodes[node]['text'], return_tensors='pt').to(device)
+                         token_embeddings = bert_model(**word_tokens).last_hidden_state  # (1, num_tokens, 768)
+                         word_embedding = torch.mean(token_embeddings, dim=1).squeeze()  # (768,)
+
+                         graph.nodes[node]['embedding'] = word_embedding
+
+          embedded_graphs.append(graph)
+
+     return embedded_graphs
 
 def embed_nodes(graphs, sentid_node_map_list):
      """Embeds nodes in the graph using SBERT, BERT, and positional embeddings."""

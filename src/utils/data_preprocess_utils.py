@@ -3,15 +3,19 @@ import spacy
 from keybert import KeyBERT
 import coreferee
 import torch
+import time
 from collections import defaultdict
 from sentence_transformers import SentenceTransformer
+from concurrent.futures import ProcessPoolExecutor, as_completed
 
 # Load models - this should be done only once
 nlp_sm = spacy.load("en_core_web_lg")
 nlp_coref = spacy.load("en_core_web_lg")
 nlp_coref.add_pipe('coreferee')
-kw_model = KeyBERT()
-sentBERT_model = SentenceTransformer('all-MiniLM-L6-v2')
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+sentBERT_model = SentenceTransformer('all-MiniLM-L6-v2', device=device)
+kw_model = KeyBERT(model=sentBERT_model)
+
 
 def load_jsonl(file_path):
      """  Loads data from a JSONL file with the correct multi-document format.
@@ -34,18 +38,28 @@ def load_jsonl(file_path):
 def split_sentences(documents_list):
      """Splits sentences in each document within the list."""
      processed_documents_list = []
-     for documents in documents_list:
-          processed_documents = []
-          for document in documents:
-               sentences = []
-               doc = nlp_sm(document[0])
-               for sent in doc.sents:
-                    sentences.append(sent.text)
-               processed_documents.append(sentences)
-          processed_documents_list.append(processed_documents)
+     
+     for docs in documents_list:
+          doc_str_list = [doc[0] for doc in docs]
+     
+          #  parallel processing
+          with ProcessPoolExecutor() as executor:
+               docs_sents_list = list(executor.map(split_doc_sent, doc_str_list))
 
+          processed_documents_list.append(docs_sents_list)
+     
      return processed_documents_list
 
+def split_doc_sent(single_document):
+     ## the input should be String
+     try:
+          doc = nlp_sm(single_document.strip())
+          sentences = [sent.text for sent in doc.sents]
+     except Exception as e:
+          print(f"split doc into sentence FAIL! Error occurs: {e}")
+          return []
+     
+     return sentences
 
 def extract_keywords(documents_list, words_per_100=1, min_keywords=2, max_keywords=15):
      """extract key word from each document, default 10 words
@@ -59,22 +73,22 @@ def extract_keywords(documents_list, words_per_100=1, min_keywords=2, max_keywor
      
      keywords_list = []
      for documents in documents_list:
-          kw_per_doc = []
-          for doc in documents:
-               ## dynamic top_n
-               top_n = max(min_keywords, min(max_keywords, (len(doc) // 100) * words_per_100))
+          ## dynamic top_n
+          avg_length = sum(len(doc) for doc in documents) // len(documents)
+          top_n = max(min_keywords, min(max_keywords, (avg_length // 100) * words_per_100))
+          documents = [doc[0] for doc in documents] ## convert to string list
+          
+          keywords = kw_model.extract_keywords(
+               documents,
+               top_n=top_n,
+               stop_words='english',
+               use_mmr=True,
+               diversity=0.6,
+               keyphrase_ngram_range=(1, 1)
+          )
                
-               keywords = kw_model.extract_keywords(
-                    doc,
-                    top_n=top_n,
-                    stop_words='english',
-                    use_mmr=True,
-                    diversity=0.6,
-                    keyphrase_ngram_range=(1, 1)
-               )
-               kw_per_doc.append(keywords)
-
-          keywords_list.append(kw_per_doc)
+          keywords_list.append(keywords)
+          
      return keywords_list
 
 
@@ -83,7 +97,6 @@ def coref_resolve(documents_list):
 
      Args:
           documents_list (_type_): documents with sentences
-          sent_sentid_map (_type_): sentence to sentence id dictionary, key: (training_idx, doc_idx, sent), value: node id
 
      Returns:
           _type_: coref_cluster for each document. form as orginal dataset. cluster element: (training_idx, doc_idx, sent), to find node id.
@@ -121,7 +134,6 @@ def coref_resolve(documents_list):
      
      return coref_docs_list
 
-
 def define_node_edge(documents_list, edge_similarity_threshold = 0.6):
      """_summary_ index node, including word and sentence; define all types of edges
 
@@ -131,9 +143,14 @@ def define_node_edge(documents_list, edge_similarity_threshold = 0.6):
      Returns:
           _type_:  word_node_map, sent_node_map, edge list, sentid_nodeid_map
      """
+     
+     print("Start preprocessing...")
+     start_time = time.time()
      docs_sents_list = split_sentences(documents_list)
      docs_kws_scores_list = extract_keywords(documents_list)
      docs_corefs_list = coref_resolve(documents_list)
+     end_time = time.time()
+     print(f"Finish preprocessing, time cost:  {end_time - start_time:.4f} s.")
      
      edge_data_list = []
      word_node_list = []
@@ -188,13 +205,17 @@ def define_node_edge(documents_list, edge_similarity_threshold = 0.6):
           
           ## 3. similarity
           for doc_idx, sents in enumerate(docs_sentences):
-               sent_embeddings = sentBERT_model.encode(sents)
-               similarities_matrix = sentBERT_model.similarity(sent_embeddings, sent_embeddings)
+               # sent_embeddings = sentBERT_model.encode(sents)
+               # similarities_matrix = sentBERT_model.similarity(sent_embeddings, sent_embeddings)
+               sent_embeddings = sentBERT_model.encode(sents, convert_to_tensor=True)
+               similarities_matrix = torch.mm(
+                    sent_embeddings, sent_embeddings.t()
+               )
                
                n = len(sent_embeddings)
                for i in range(n):
-                    for j in range(n):
-                         if j < i and similarities_matrix[i][j] >= edge_similarity_threshold:
+                    for j in range(i + 1, n):
+                         if similarities_matrix[i][j] >= edge_similarity_threshold:
                               node_i = sentId_nodeId_map[(training_idx, doc_idx, i)]
                               node_j = sentId_nodeId_map[(training_idx, doc_idx, j)]
                               

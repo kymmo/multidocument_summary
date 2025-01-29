@@ -16,12 +16,10 @@ class SummaryDataset(Dataset):
           return embedded_graphs
 
      def __len__(self):
-          print("len ", len(self.data))
           return len(self.data)
 
      def __getitem__(self, idx):
           ## return HeteroData
-          print(f"get_item: id {idx}, data {self.data[idx]}")
           return self.data[idx]
      
      
@@ -75,16 +73,15 @@ class OptimizedDataset(Dataset):
                     self.data.append(shared_graph)
                
                self._loaded.value = True  # marked as loaded
+               print(f"Data has been loaded!")
 
      def __len__(self):
           if not self._loaded.value:
                self._load_all()  # late loader
-          print("len ", len(self.data))
           return len(self.data)
 
      def __getitem__(self, idx):
           if not self._loaded.value:
                self._load_all()
                
-          print(f"get_item: id {idx}, data {self.data[idx]}")
           return self.data[idx]
