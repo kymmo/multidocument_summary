@@ -9,7 +9,7 @@ from sentence_transformers import SentenceTransformer
 from concurrent.futures import ProcessPoolExecutor, as_completed
 
 # Load models - this should be done only once
-nlp_sm = spacy.load("en_core_web_lg")
+nlp_sm = spacy.load("en_core_web_lg", disable=["tagger", "ner", "lemmatizer", "attribute_ruler"])
 nlp_coref = spacy.load("en_core_web_lg")
 nlp_coref.add_pipe('coreferee')
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -105,7 +105,7 @@ def coref_resolve(documents_list):
      for training_id, docs in enumerate(documents_list):
           coref_docs = []
           for doc_id, document in enumerate(docs):
-               doc = nlp_coref(document[0])
+               doc = nlp_coref(document[0].strip())
                coref_doc = []
                for chain in doc._.coref_chains: ## coreference cluster
                     coref_cluster = []
