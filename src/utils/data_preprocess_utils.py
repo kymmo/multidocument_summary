@@ -6,7 +6,7 @@ import torch
 import time
 from collections import defaultdict
 from sentence_transformers import SentenceTransformer
-from concurrent.futures import ProcessPoolExecutor, as_completed
+from concurrent.futures import ProcessPoolExecutor
 
 # Load models - this should be done only once
 nlp_sm = spacy.load("en_core_web_lg", disable=["tagger", "ner", "lemmatizer", "attribute_ruler"])
