@@ -1,8 +1,11 @@
+### for record. actual running process is in Colab
+
 from datasets import load_dataset
 import json
 import os
 
 def convert_wcep_file(input_file, output_file):
+     MAX_LEN = 1000000
      with open(input_file, "r", encoding="utf-8") as fin, \
           open(output_file, "w", encoding="utf-8") as fout:
 
@@ -17,7 +20,7 @@ def convert_wcep_file(input_file, output_file):
                     # check if data exist
                     if "document" in data and isinstance(data["document"], list):
                          # convert to: ["a","d","f"] → [["a"],["d"],["f"]]
-                         data["document"] = [[item] for item in data["document"]]
+                         data["document"] = [[item] for item in data["document"] if len(item) < MAX_LEN]
                     
                     fout.write(json.dumps(data, ensure_ascii=False) + "\n")
                
@@ -45,6 +48,7 @@ def preprocess_function2(samples):
           raise ValueError("Invalid 'document' field in samples.")
 
      doc_list = []
+     MAX_LEN = 1000000
      for doc in samples['document']:
           if not isinstance(doc, str):
                raise ValueError("Each 'document' item must be a string.")
@@ -52,7 +56,7 @@ def preprocess_function2(samples):
           parts = [part.strip() for part in doc.split('|||||') if part.strip()]
           doc_list.append(parts)
 
-     converted_list = [[[item] for item in sublist] for sublist in doc_list]
+     converted_list = [[[item] for item in sublist if len(item) < MAX_LEN] for sublist in doc_list]
 
 
      if 'summary' not in samples or not isinstance(samples['summary'], list):

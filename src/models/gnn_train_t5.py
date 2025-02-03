@@ -21,7 +21,7 @@ def train_gnn(file_path, hidden_size, out_size, num_heads,sentence_in_size = 768
      """Trains the HetGNN model using a proxy task."""
      print(f"Task runing on {device}")
      
-     print(f"Start loading dataset...")
+     print(f"Start loading sample graphs...")
      train_dataset = OptimizedDataset(file_path)
      train_dataloader = geo_DataLoader(
           train_dataset,

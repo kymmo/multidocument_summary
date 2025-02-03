@@ -73,7 +73,7 @@ class OptimizedDataset(Dataset):
                     self.data.append(shared_graph)
                
                self._loaded.value = True  # marked as loaded
-               print(f"Data has been loaded!")
+               print(f"Data has been loaded into memory!")
 
      def __len__(self):
           if not self._loaded.value:

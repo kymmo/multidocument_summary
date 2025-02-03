@@ -7,6 +7,10 @@ import time
 from collections import defaultdict
 from sentence_transformers import SentenceTransformer
 from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures import ProcessPoolExecutor
+from functools import wraps
+import traceback
+
 
 # Load models - this should be done only once
 nlp_sm = spacy.load("en_core_web_lg", disable=["tagger", "ner", "lemmatizer", "attribute_ruler"])
@@ -43,24 +47,35 @@ def split_sentences(documents_list):
           doc_str_list = [doc[0] for doc in docs]
      
           #  parallel processing
-          with ProcessPoolExecutor() as executor:
+          with ProcessPoolExecutor(max_workers=3) as executor:
                docs_sents_list = list(executor.map(split_doc_sent, doc_str_list))
 
           processed_documents_list.append(docs_sents_list)
      
      return processed_documents_list
 
+def parallel_error_handler(default_output=None, log_errors=True):
+     def decorator(func):
+          @wraps(func)
+          def wrapper(*args, **kwargs):
+               try:
+                    return func(*args, **kwargs)
+               except Exception as e:
+                    if log_errors:
+                         error_msg = f"[{func.__name__} FAIL] Input: {str(args)[:50]}...\n{traceback.format_exc()}"
+                         print(error_msg)
+                    return default_output
+          return wrapper
+     
+     return decorator
+
+@parallel_error_handler(default_output=[], log_errors=True)
 def split_doc_sent(single_document):
      ## the input should be String
-     try:
-          doc = nlp_sm(single_document.strip())
-          sentences = [sent.text for sent in doc.sents]
-     except Exception as e:
-          print(f"split doc into sentence FAIL! Error occurs: {e}")
-          return []
+     doc = nlp_sm(single_document.strip())
      
-     return sentences
-
+     return [sent.text for sent in doc.sents]
+     
 def extract_keywords(documents_list, words_per_100=1, min_keywords=2, max_keywords=15):
      """extract key word from each document, default 10 words
 
