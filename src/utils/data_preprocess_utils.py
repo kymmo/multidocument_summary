@@ -10,6 +10,7 @@ from concurrent.futures import ProcessPoolExecutor
 from concurrent.futures import ProcessPoolExecutor
 from functools import wraps
 import traceback
+import os
 
 
 # Load models - this should be done only once
@@ -62,7 +63,7 @@ def parallel_error_handler(default_output=None, log_errors=True):
                     return func(*args, **kwargs)
                except Exception as e:
                     if log_errors:
-                         error_msg = f"[{func.__name__} FAIL] Input: {str(args)[:50]}...\n{traceback.format_exc()}"
+                         error_msg = f"[PID:{os.getpid()}] {func.__name__} FAIL. Input: {str(args)[:50]}...\n{traceback.format_exc()}"
                          print(error_msg)
                     return default_output
           return wrapper
