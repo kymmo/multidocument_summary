@@ -32,8 +32,9 @@ def load_jsonl(file_path):
           for line in f:
                try:
                     data = json.loads(line)
-                    documents_list.append(data['document']) # Each line is a list of documents
-                    summary_list.append(data['summary'])
+                    if len(data['document']) > 1: # except single doc
+                         documents_list.append(data['document']) # Each line is a list of documents
+                         summary_list.append(data['summary'])
                except json.JSONDecodeError:
                     print(f"Skipping invalid JSON line: {line}")
      
@@ -129,7 +130,11 @@ def extract_keywords(documents_list, words_per_100=1, min_keywords=2, max_keywor
                diversity=0.6,
                keyphrase_ngram_range=(1, 1)
           )
-               
+          
+          #################test
+          print("output", keywords)
+          ############################
+          
           keywords_list.append(keywords)
           
      return keywords_list
