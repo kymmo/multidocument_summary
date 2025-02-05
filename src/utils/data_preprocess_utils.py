@@ -76,7 +76,34 @@ def split_doc_sent(single_document):
      doc = nlp_sm(single_document.strip())
      
      return [sent.text for sent in doc.sents]
+
+def split_sentences2(documents_list):
+     """_summary_ higher speed
+
+     Args:
+          documents_list (_type_): original doc list
+
+     Returns:
+          _type_: _description_
+     """
+     processed_documents_list = []
      
+     with ProcessPoolExecutor(max_workers= max(1, os.cpu_count()//2)) as executor:
+          for docs in documents_list:
+               input_texts = [doc[0].strip() for doc in docs]
+               docs_sents_list = list(executor.map(optimized_split_doc_sent, input_texts, chunksize=20))
+
+               processed_documents_list.append(docs_sents_list)
+     
+     return processed_documents_list
+
+@parallel_error_handler(default_output=[], log_errors=True)
+def optimized_split_doc_sent(text):
+     # load global model
+     global nlp_sm
+     doc = nlp_sm(text.strip())
+     return [sent.text for sent in doc.sents]
+
 def extract_keywords(documents_list, words_per_100=1, min_keywords=2, max_keywords=15):
      """extract key word from each document, default 10 words
 
@@ -107,7 +134,6 @@ def extract_keywords(documents_list, words_per_100=1, min_keywords=2, max_keywor
           
      return keywords_list
 
-
 def coref_resolve(documents_list):
      """_summary_ coreference resolve
 
@@ -123,6 +149,7 @@ def coref_resolve(documents_list):
           for doc_id, document in enumerate(docs):
                doc = nlp_coref(document[0].strip())
                coref_doc = []
+               
                for chain in doc._.coref_chains: ## coreference cluster
                     coref_cluster = []
                     ## resolve the sentence it belongs to. antecednet in the first place
@@ -150,6 +177,60 @@ def coref_resolve(documents_list):
      
      return coref_docs_list
 
+def coref_resolve2(documents_list):
+     """ higher speed
+     """
+     # Collect all texts and their indices for batch processing
+     all_texts = []
+     index_map = []  # Stores (training_id, doc_id) for each text
+     for training_id, docs in enumerate(documents_list):
+          for doc_id, document in enumerate(docs):
+               text = document[0].strip()
+               all_texts.append(text)
+               index_map.append((training_id, doc_id))
+
+     # Batch process all documents
+     processed_docs = list(nlp_coref.pipe(all_texts))
+
+     # Initialize result structure
+     coref_docs_list = [
+          [[] for _ in docs]
+          for docs in documents_list
+     ]
+
+     # Process each document's results
+     for (training_id, doc_id), doc in zip(index_map, processed_docs):
+          coref_doc = []
+          for chain in doc._.coref_chains:
+               cluster = []
+               seen = set()
+               
+               # Process antecedent first
+               antecedent_pos = chain.most_specific_mention_index
+               antecedent = chain[antecedent_pos]
+               ant_sent = str(doc[antecedent[0]].sent)
+               key = (training_id, doc_id, ant_sent)
+               cluster.append(key)
+               seen.add(key)
+
+               # Process other mentions
+               for idx, mention in enumerate(chain):
+                    if idx == antecedent_pos:
+                         continue
+                    token_id = mention[0]
+                    sent = str(doc[token_id].sent)
+                    key = (training_id, doc_id, sent)
+                    if key not in seen:
+                         cluster.append(key)
+                         seen.add(key)
+
+               if len(cluster) > 1:
+                    coref_doc.append(cluster)
+          
+          coref_docs_list[training_id][doc_id] = coref_doc
+
+     return coref_docs_list
+
 def define_node_edge(documents_list, edge_similarity_threshold = 0.6):
      """_summary_ index node, including word and sentence; define all types of edges
 
@@ -162,9 +243,9 @@ def define_node_edge(documents_list, edge_similarity_threshold = 0.6):
      
      print("Start preprocessing...")
      start_time = time.time()
-     docs_sents_list = split_sentences(documents_list)
+     docs_sents_list = split_sentences2(documents_list)
      docs_kws_scores_list = extract_keywords(documents_list)
-     docs_corefs_list = coref_resolve(documents_list)
+     docs_corefs_list = coref_resolve2(documents_list)
      end_time = time.time()
      print(f"Finish preprocessing, time cost:  {end_time - start_time:.4f} s.")
      

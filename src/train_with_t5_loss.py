@@ -18,7 +18,7 @@ def model_train_and_eval_t5(dataset_path):
      file = Path(train_data_path)
      if not file.exists():
           raise FileNotFoundError(f"File path {train_data_path} is not exist!")
-     print(f"Acessing data path: {train_data_path}")
+     print(f"Accessing data path: {train_data_path}")
      
      train_gnn(
           file_path=train_data_path,
