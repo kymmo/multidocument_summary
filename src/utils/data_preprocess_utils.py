@@ -131,10 +131,6 @@ def extract_keywords(documents_list, words_per_100=1, min_keywords=2, max_keywor
                keyphrase_ngram_range=(1, 1)
           )
           
-          #################test
-          print("output", keywords)
-          ############################
-          
           keywords_list.append(keywords)
           
      return keywords_list
