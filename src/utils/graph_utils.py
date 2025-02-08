@@ -150,7 +150,7 @@ def get_sent_pos_encoding(sentid_node_map_list):
           doc_size = 1 + next(reversed(sentid_node_map.items()))[0][1] ## the second key is doc_id
           # doc absolute position embedding
           doc_input_ids = [i for i in range(doc_size)]
-          doc_pos_embeddings = bert_abs_model.embeddings.position_embeddings(torch.tensor(doc_input_ids))
+          doc_pos_embeddings = bert_abs_model.embeddings.position_embeddings(torch.tensor(doc_input_ids).to(device))
           sent_pos_embeddings = []
 
           for (training_id, doc_id, sent_id), node_id in reversed(sentid_node_map.items()):
@@ -174,7 +174,7 @@ def get_sent_pos_encoding(sentid_node_map_list):
                     # batch = sent_input_ids[start_pos:end_pos]
                     batch = [j for j in range((end_pos - start_pos))]
                     
-                    batch_emb = bert_relative_model.embeddings.position_embeddings(torch.tensor(batch))
+                    batch_emb = bert_relative_model.embeddings.position_embeddings(torch.tensor(batch).to(device))
                     next_id = 0 if start_pos == 0 else overlap
                     sent_pos_embeddings.extend(batch_emb[next_id:]) ## simplely cut
                     i = end_pos
