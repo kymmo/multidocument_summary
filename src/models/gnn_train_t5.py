@@ -60,7 +60,7 @@ def train_gnn(file_path, hidden_size, out_size, num_heads,sentence_in_size = 768
                
                ## labels calculate
                t5_embedding_matrix = t5_model.get_input_embeddings().weight  # (vocab_size, hidden_dim)
-               similarities = chunked_cosine_similarity(projected_embeddings, t5_embedding_matrix, chunk_size=16)
+               similarities = chunked_cosine_similarity(projected_embeddings, t5_embedding_matrix, chunk_size=8)
                top_k_values, top_k_indices = similarities.topk(k=5, dim=1)
                average_similarity = top_k_values.mean(dim=1)  # (batch_size,)
                abs_diff = torch.abs(similarities - average_similarity.unsqueeze(1))  # (batch_size, vocab_size)
@@ -69,6 +69,8 @@ def train_gnn(file_path, hidden_size, out_size, num_heads,sentence_in_size = 768
                labels = closest_token_ids.unsqueeze(1).expand(-1, seq_length)  # (batch_size, seq_length)
                labels = labels.long().to(device)  # make sure long type and GPU calculation
 
+               print("CUDA usage: ", torch.cuda.memory_summary())
+               
                outputs = t5_model(inputs_embeds=reshape_embeddings, labels=labels)
                loss = outputs.loss ## cross-entropy
                # ## distribution
@@ -125,7 +127,10 @@ def chunked_cosine_similarity(embeddings, embedding_matrix, chunk_size=16):
      for i in range(0, embeddings.size(0), chunk_size):
           chunk = embeddings[i:i + chunk_size]
           sim = F.cosine_similarity(chunk.unsqueeze(1), embedding_matrix.unsqueeze(0), dim=2)
-          similarities.append(sim)
+          similarities.append(sim.cpu())
+          
+          del chunk  # save gpu memory
+          del sim
      return torch.cat(similarities, dim=0)
 
 def custom_collate_fn(batch):
