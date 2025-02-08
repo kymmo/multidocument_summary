@@ -27,7 +27,6 @@ def train_gnn(file_path, hidden_size, out_size, num_heads,sentence_in_size = 768
           train_dataset,
           batch_size=batch_size,
           shuffle=True,
-          pin_memory=True,
           # prefetch_factor=2,
           # num_workers=2,
           )
