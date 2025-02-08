@@ -13,6 +13,13 @@ bert_tokenizer = BertTokenizer.from_pretrained("bert-base-uncased")
 bert_model = BertModel.from_pretrained("bert-base-uncased").to(device)
 sentBERT_model = SentenceTransformer('all-MiniLM-L6-v2').to(device)
 
+bert_config = BertConfig.from_pretrained("bert-base-uncased")
+bert_config.position_embedding_type = "absolute"
+bert_abs_model = BertModel(bert_config).to(device)
+
+bert_config.position_embedding_type = "relative_key"
+bert_relative_model = BertModel(bert_config).to(device)
+
 def get_embed_graph(file_path):
      docs_list, summary_list = load_jsonl(file_path)
      print("Data file is loaded. Creating embedding graph...")
@@ -49,7 +56,7 @@ def create_graph(word_nodeId_list, sent_nodeId_list, edge_data_list):
           word_nodes = [(w_node_id, {"type": "word", "text": word}) for word, w_node_id in word_node_map.items()]
           graph.add_nodes_from(word_nodes)
 
-          sent_nodes = [(s_node_id, {"type": "sentence", "text": sent}) for sent, s_node_id in sent_node_map.items()]
+          sent_nodes = [(s_node_id, {"type": "sentence", "text": sent_triple}) for sent_triple, s_node_id_list in sent_node_map.items() for s_node_id in s_node_id_list]
           graph.add_nodes_from(sent_nodes)
           
           edges = []
@@ -142,9 +149,6 @@ def get_sent_pos_encoding(sentid_node_map_list):
           doc_sentinel = -1
           doc_size = 1 + next(reversed(sentid_node_map.items()))[0][1] ## the second key is doc_id
           # doc absolute position embedding
-          bert_abs_config = BertConfig.from_pretrained("bert-base-uncased")
-          bert_abs_config.position_embedding_type = "absolute"
-          bert_abs_model = BertModel(bert_abs_config)
           doc_input_ids = [i for i in range(doc_size)]
           doc_pos_embeddings = bert_abs_model.embeddings.position_embeddings(torch.tensor(doc_input_ids))
           sent_pos_embeddings = []
@@ -156,14 +160,25 @@ def get_sent_pos_encoding(sentid_node_map_list):
                     continue
                
                doc_sentinel = doc_id
-               
+
                # sentence relative position embedding
-               bert_relative_config = BertConfig.from_pretrained("bert-base-uncased")
-               bert_relative_config.position_embedding_type = "relative_key"
-               bert_relative_model = BertModel(bert_relative_config)
-               sent_input_ids = [i for i in range(sent_id + 1)]
-               sent_pos_embeddings = bert_relative_model.embeddings.position_embeddings(torch.tensor(sent_input_ids))
-               
+               # sent_input_ids = [i for i in range(sent_id + 1)]
+               sent_pos_embeddings = []
+               embedding_size = 512
+               sent_size = sent_id + 1
+               overlap = 5
+               i = 0
+               while i < sent_size: ## in case the sent number exceeds the embedding size:512
+                    start_pos = max(0, i - overlap)
+                    end_pos = min(sent_size, start_pos + embedding_size)
+                    # batch = sent_input_ids[start_pos:end_pos]
+                    batch = [j for j in range((end_pos - start_pos))]
+                    
+                    batch_emb = bert_relative_model.embeddings.position_embeddings(torch.tensor(batch))
+                    next_id = 0 if start_pos == 0 else overlap
+                    sent_pos_embeddings.extend(batch_emb[next_id:]) ## simplely cut
+                    i = end_pos
+                    
                node_embedding = doc_pos_embeddings[doc_id] + sent_pos_embeddings[sent_id]
                sent_node_emb_map[node_id] = node_embedding
 

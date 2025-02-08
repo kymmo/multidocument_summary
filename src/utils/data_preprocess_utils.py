@@ -14,7 +14,6 @@ import os
 
 
 # Load models - this should be done only once
-nlp_sm = spacy.load("en_core_web_lg", disable=["tagger", "ner", "lemmatizer", "attribute_ruler"])
 nlp_coref = spacy.load("en_core_web_lg")
 nlp_coref.add_pipe('coreferee')
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -41,17 +40,18 @@ def load_jsonl(file_path):
      return documents_list, summary_list
 
 
-def split_sentences(documents_list):
-     """Splits sentences in each document within the list."""
+def split_sentences_pipe(documents_list):
+     """Splits sentences in each document within the list.
+     return sent object list.
+     """
      processed_documents_list = []
      
      for docs in documents_list:
-          doc_str_list = [doc[0] for doc in docs]
-     
-          #  parallel processing
-          with ProcessPoolExecutor(max_workers=3) as executor:
-               docs_sents_list = list(executor.map(split_doc_sent, doc_str_list))
-
+          input_texts = [doc[0].strip() for doc in docs]
+          docs_sents_list = [
+               [sent for sent in doc.sents]
+               for doc in nlp_coref.pipe(input_texts, batch_size=20)
+          ]
           processed_documents_list.append(docs_sents_list)
      
      return processed_documents_list
@@ -70,13 +70,6 @@ def parallel_error_handler(default_output=None, log_errors=True):
           return wrapper
      
      return decorator
-
-@parallel_error_handler(default_output=[], log_errors=True)
-def split_doc_sent(single_document):
-     ## the input should be String
-     doc = nlp_sm(single_document.strip())
-     
-     return [sent.text for sent in doc.sents]
 
 def split_sentences2(documents_list):
      """_summary_ higher speed
@@ -101,8 +94,8 @@ def split_sentences2(documents_list):
 @parallel_error_handler(default_output=[], log_errors=True)
 def optimized_split_doc_sent(text):
      # load global model
-     global nlp_sm
-     doc = nlp_sm(text.strip())
+     global nlp_coref
+     doc = nlp_coref(text.strip())
      return [sent.text for sent in doc.sents]
 
 def extract_keywords(documents_list, words_per_100=1, min_keywords=2, max_keywords=15):
@@ -180,6 +173,7 @@ def coref_resolve(documents_list):
 
 def coref_resolve2(documents_list):
      """ higher speed
+     return (training_id, doc_id, the coreference cluster token id)
      """
      # Collect all texts and their indices for batch processing
      all_texts = []
@@ -204,26 +198,21 @@ def coref_resolve2(documents_list):
           coref_doc = []
           for chain in doc._.coref_chains:
                cluster = []
-               seen = set()
                
                # Process antecedent first
                antecedent_pos = chain.most_specific_mention_index
-               antecedent = chain[antecedent_pos]
-               ant_sent = str(doc[antecedent[0]].sent)
-               key = (training_id, doc_id, ant_sent)
+               antecedent = chain[antecedent_pos][0] ## token position.
+               key = (training_id, doc_id, antecedent)
                cluster.append(key)
-               seen.add(key)
 
                # Process other mentions
                for idx, mention in enumerate(chain):
                     if idx == antecedent_pos:
                          continue
                     token_id = mention[0]
-                    sent = str(doc[token_id].sent)
-                    key = (training_id, doc_id, sent)
-                    if key not in seen:
-                         cluster.append(key)
-                         seen.add(key)
+                    # sent = str(doc[token_id].sent)
+                    key = (training_id, doc_id, token_id)
+                    cluster.append(key)
 
                if len(cluster) > 1:
                     coref_doc.append(cluster)
@@ -244,7 +233,7 @@ def define_node_edge(documents_list, edge_similarity_threshold = 0.6):
      
      print("Start preprocessing...")
      start_time = time.time()
-     docs_sents_list = split_sentences2(documents_list)
+     docs_sents_obj_list = split_sentences_pipe(documents_list)
      docs_kws_scores_list = extract_keywords(documents_list)
      docs_corefs_list = coref_resolve2(documents_list)
      end_time = time.time()
@@ -254,22 +243,28 @@ def define_node_edge(documents_list, edge_similarity_threshold = 0.6):
      word_node_list = []
      sent_node_list = []
      sentId_nodeId_list = []
-     for training_idx, (docs_sentences, docs_kws_scores, docs_corefs) in enumerate(zip(docs_sents_list, docs_kws_scores_list, docs_corefs_list)):
+     for training_idx, (docs_sent_objs, docs_kws_scores, docs_corefs) in enumerate(zip(docs_sents_obj_list, docs_kws_scores_list, docs_corefs_list)):
           node_index = 0
           
           # sentence node index
-          sent_nodeId_map = {} ## for sentence related edges
           sentId_nodeId_map = {}
-          for doc_idx, sents in enumerate(docs_sentences):
-               for sent_id, sent in enumerate(sents):
-                    sent_nodeId_map[(training_idx, doc_idx, sent)] = node_index
+          token_node_map = {} ## for coreference resolve. each doc hold a token-node list
+          sent_nodeId_map = defaultdict(list) ## need to handle repeat sent
+          for doc_idx, sent_objs in enumerate(docs_sent_objs):
+               token_node_list = [-1] * sum(len(sent) for sent in sent_objs)
+               for sent_id, sent_obj in enumerate(sent_objs):
                     sentId_nodeId_map[(training_idx, doc_idx, sent_id)] = node_index
+                    sent_nodeId_map[((training_idx, doc_idx, sent_obj.text))].append(node_index)
+                    
+                    for token in sent_obj:
+                         token_node_list[token.i] = node_index
                     node_index += 1
-          num_sentences = node_index
-
+               
+               token_node_map[(training_idx, doc_idx)] = token_node_list
+               
           # word node index
           word_nodeId_map = {} ## for word-sentence edge
-          word_index = num_sentences
+          word_index = node_index
           for doc_idx, doc_kws_scs in enumerate(docs_kws_scores):
                for keyword, score in doc_kws_scs:
                     if keyword not in word_nodeId_map:
@@ -277,16 +272,24 @@ def define_node_edge(documents_list, edge_similarity_threshold = 0.6):
                          word_index += 1
           
           edge_data = defaultdict(list)
-          def add_edge(node1_idx, node2_idx, edge_type, weight=1):
+          def add_edge(node1_idx, node2_idx, edge_type, weight=1.0):
                if torch.is_tensor(weight):
                     weight = weight.detach().item()
-               edge_data[(node1_idx, node2_idx)].append({'type': edge_type, 'weight': weight})
+                    
+               ## advoid duplicate
+               if node1_idx == node2_idx: return
                
+               if ((node1_idx, node2_idx) in edge_data
+                    and {'type': edge_type, 'weight': weight} in edge_data[(node1_idx, node2_idx)]):
+                    return
+               
+               edge_data[(node1_idx, node2_idx)].append({'type': edge_type, 'weight': weight})
+                    
           ## 1. word-sentence
-          for doc_idx, sents in enumerate(docs_sentences):
-               for sent_id, sent in enumerate(sents):
+          for doc_idx, sent_objs in enumerate(docs_sent_objs):
+               for sent_id, sent_obj in enumerate(sent_objs):
                     ## check wether contain keywords
-                    sent_low = sent.lower()
+                    sent_low = sent_obj.text.lower()
                     for word, score in docs_kws_scores[doc_idx]:
                          if word.lower() in sent_low:
                               word_node = word_nodeId_map[word]
@@ -294,17 +297,17 @@ def define_node_edge(documents_list, edge_similarity_threshold = 0.6):
                               add_edge(word_node, sent_node, "word_sent", weight=score)
                               
           ## 2. pronoun-antecedent
-          for doc_idx, doc_corefs in enumerate(docs_corefs): ## as [(training_id, doc_id, sent_text)...]
+          for doc_idx, doc_corefs in enumerate(docs_corefs): ## as [(training_id, doc_id, token_id)...]
+               doc_token_node_map = token_node_map[(training_idx, doc_idx)]
                for corf_cluster in doc_corefs:
-                    antecedent = sent_nodeId_map[corf_cluster[0]]
+                    antecedent = doc_token_node_map[corf_cluster[0][2]]
                     for i in range(1, len(corf_cluster)):
                          ## edge on each coref. the first one is the resolve
-                         add_edge(sent_nodeId_map[corf_cluster[i]], antecedent, "pronoun_antecedent")
+                         add_edge(doc_token_node_map[corf_cluster[i][2]], antecedent, "pronoun_antecedent")
           
           ## 3. similarity
-          for doc_idx, sents in enumerate(docs_sentences):
-               # sent_embeddings = sentBERT_model.encode(sents)
-               # similarities_matrix = sentBERT_model.similarity(sent_embeddings, sent_embeddings)
+          for doc_idx, sent_objs in enumerate(docs_sent_objs):
+               sents = [sent.text for sent in sent_objs]
                sent_embeddings = sentBERT_model.encode(sents, convert_to_tensor=True)
                similarities_matrix = torch.mm(
                     sent_embeddings, sent_embeddings.t()
