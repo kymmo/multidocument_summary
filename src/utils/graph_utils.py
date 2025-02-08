@@ -239,13 +239,13 @@ def convert_graph_from_nx_to_pyg(graphs):
                     similarity_edge_indices.append([new_id_from, new_id_to])
                     similarity_edge_attrs.append([weight])
           
-          het_graph['sentence', 'similarity', 'sentence'].edge_index = torch.tensor(similarity_edge_indices).t()
+          het_graph['sentence', 'similarity', 'sentence'].edge_index = torch.tensor(similarity_edge_indices).t().to(torch.int64)
           het_graph['sentence', 'similarity', 'sentence'].edge_attr = torch.tensor(similarity_edge_attrs)
-          het_graph['sentence', 'pro_ant', 'sentence'].edge_index = torch.tensor(pro_ant_edge_indices).t()
+          het_graph['sentence', 'pro_ant', 'sentence'].edge_index = torch.tensor(pro_ant_edge_indices).t().to(torch.int64)
           het_graph['sentence', 'pro_ant', 'sentence'].edge_attr = torch.tensor(pro_ant_edge_attrs)
-          het_graph['sentence', 'has', 'word'].edge_index = torch.tensor(sent_word_edge_indices).t()
+          het_graph['sentence', 'has', 'word'].edge_index = torch.tensor(sent_word_edge_indices).t().to(torch.int64)
           het_graph['sentence', 'has', 'word'].edge_attr = torch.tensor(sent_word_edge_attrs)
-          het_graph['word', 'in', 'sentence'].edge_index = torch.tensor(word_sent_edge_indices).t()
+          het_graph['word', 'in', 'sentence'].edge_index = torch.tensor(word_sent_edge_indices).t().to(torch.int64)
           het_graph['word', 'in', 'sentence'].edge_attr = torch.tensor(sent_word_edge_attrs)
           
           hetro_graphs.append(het_graph)
