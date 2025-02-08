@@ -308,7 +308,9 @@ def define_node_edge(documents_list, edge_similarity_threshold = 0.6):
           ## 3. similarity
           for doc_idx, sent_objs in enumerate(docs_sent_objs):
                sents = [sent.text for sent in sent_objs]
-               sent_embeddings = sentBERT_model.encode(sents, convert_to_tensor=True)
+               with torch.no_grad():  # disable gradient tracking
+                    sent_embeddings = sentBERT_model.encode(sents, convert_to_tensor=True)
+               
                similarities_matrix = torch.mm(
                     sent_embeddings, sent_embeddings.t()
                )
@@ -327,5 +329,10 @@ def define_node_edge(documents_list, edge_similarity_threshold = 0.6):
           word_node_list.append(word_nodeId_map)
           sent_node_list.append(sent_nodeId_map)
           sentId_nodeId_list.append(sentId_nodeId_map)
+     
+     ## before return. clear gpu model
+     del sentBERT_model
+     del kw_model
+     print(torch.cuda.memory_summary())
      
      return word_node_list, sent_node_list, edge_data_list, sentId_nodeId_list

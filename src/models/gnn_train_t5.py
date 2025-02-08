@@ -17,7 +17,7 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 t5_tokenizer = T5Tokenizer.from_pretrained(base_model)
 t5_model = T5ForConditionalGeneration.from_pretrained(base_model).to(device)
 
-def train_gnn(file_path, hidden_size, out_size, num_heads,sentence_in_size = 768, word_in_size = 768, learning_rate=0.001, num_epochs=20, feat_drop=0.2, attn_drop=0.2, batch_size=32):
+def train_gnn(file_path, hidden_size, out_size, num_heads,sentence_in_size = 768, word_in_size = 768, learning_rate=0.001, num_epochs=20, feat_drop=0.2, attn_drop=0.2, batch_size=16):
      """Trains the HetGNN model using a proxy task."""
      print(f"Task runing on {device}")
      
@@ -26,7 +26,7 @@ def train_gnn(file_path, hidden_size, out_size, num_heads,sentence_in_size = 768
      train_dataloader = geo_DataLoader(
           train_dataset,
           batch_size=batch_size,
-          shuffle=True,
+          shuffle=True
           # prefetch_factor=2,
           # num_workers=2,
           )
@@ -60,7 +60,7 @@ def train_gnn(file_path, hidden_size, out_size, num_heads,sentence_in_size = 768
                
                ## labels calculate
                t5_embedding_matrix = t5_model.get_input_embeddings().weight  # (vocab_size, hidden_dim)
-               similarities = chunked_cosine_similarity(projected_embeddings, t5_embedding_matrix, chunk_size=8)
+               similarities = chunked_cosine_similarity(projected_embeddings, t5_embedding_matrix, chunk_size=16)
                top_k_values, top_k_indices = similarities.topk(k=5, dim=1)
                average_similarity = top_k_values.mean(dim=1)  # (batch_size,)
                abs_diff = torch.abs(similarities - average_similarity.unsqueeze(1))  # (batch_size, vocab_size)
@@ -81,6 +81,10 @@ def train_gnn(file_path, hidden_size, out_size, num_heads,sentence_in_size = 768
                loss.backward()
                optimizer.step()
                total_loss += loss.item()
+               
+               ## del local variables
+               del batch
+               del labels
 
           print(f"Epoch {epoch+1}/{num_epochs}, Learning rate: {learning_rate}, Loss: {total_loss / len(train_dataloader)}")
 
@@ -89,7 +93,9 @@ def train_gnn(file_path, hidden_size, out_size, num_heads,sentence_in_size = 768
      
      print("GNN Training Finish.")
      
-     return gnn_model
+     del gnn_model
+     del T5_embed_layer_projector
+     
 
 def get_gnn_trained_embedding(evl_data_path, hidden_size, out_size, num_heads,sentence_in_size = 768, word_in_size = 768, feat_drop=0.2, attn_drop=0.2, batch_size=32):
      ## must be the same para of the train model
@@ -115,6 +121,8 @@ def get_gnn_trained_embedding(evl_data_path, hidden_size, out_size, num_heads,se
                output_embeddings.append(embeddings)
                node_sent_maps.append(batch_map)
                summary_list.append(batch_summary)
+               
+               del batch_graph
 
      output_embeddings = torch.cat(output_embeddings, dim=0)
      merged_node_map_list = [item for sublist in node_sent_maps for item in sublist]
