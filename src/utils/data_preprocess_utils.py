@@ -126,6 +126,7 @@ def extract_keywords(documents_list, words_per_100=1, min_keywords=2, max_keywor
           keywords_list.append(keywords)
      
      del kw_model
+     torch.cuda.empty_cache()
      
      return keywords_list
 
@@ -331,8 +332,5 @@ def define_node_edge(documents_list, edge_similarity_threshold = 0.6):
           word_node_list.append(word_nodeId_map)
           sent_node_list.append(sent_nodeId_map)
           sentId_nodeId_list.append(sentId_nodeId_map)
-     
-     ## before return. clear gpu model
-     print("CUDA usage after preprocess: ", torch.cuda.memory_summary())
      
      return word_node_list, sent_node_list, edge_data_list, sentId_nodeId_list

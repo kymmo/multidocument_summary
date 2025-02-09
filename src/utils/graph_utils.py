@@ -88,7 +88,8 @@ def load_bert_models(models_info, device):
                del model
           
           torch.cuda.empty_cache()  # clear gpu memory
-          print("CUDA usage after graph embedding: ", torch.cuda.memory_summary())
+          print(f"CUDA usage after graph embedding: {torch.cuda.memory_allocated()/1024**3:.2f} GB has used, remaining \
+               {torch.cuda.max_memory_allocated()/1024**3:.2f} GB available.")
 
 
 def embed_nodes_gpu(graphs, sentid_node_map_list):
@@ -140,6 +141,9 @@ def embed_nodes_gpu(graphs, sentid_node_map_list):
 
                embedded_graphs.append(graph)
 
+          del sentBERT_model
+          torch.cuda.empty_cache()
+     
           return embedded_graphs
 
 def get_sent_pos_encoding(sentid_node_map_list, bert_abs_model, bert_relative_model):

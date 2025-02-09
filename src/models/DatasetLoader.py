@@ -84,4 +84,4 @@ class OptimizedDataset(Dataset):
           if not self._loaded.value:
                self._load_all()
                
-          return self.data[idx]
+          return self.data[idx].cpu()

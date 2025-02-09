@@ -19,14 +19,17 @@ t5_model = T5ForConditionalGeneration.from_pretrained(base_model).to(device)
 
 def train_gnn(file_path, hidden_size, out_size, num_heads,sentence_in_size = 768, word_in_size = 768, learning_rate=0.001, num_epochs=20, feat_drop=0.2, attn_drop=0.2, batch_size=16):
      """Trains the HetGNN model using a proxy task."""
+     # clear previous cache
+     torch.cuda.empty_cache()
      print(f"Task runing on {device}")
-     
+
      print(f"Start loading sample graphs...")
      train_dataset = OptimizedDataset(file_path)
      train_dataloader = geo_DataLoader(
           train_dataset,
           batch_size=batch_size,
-          shuffle=True
+          shuffle=True,
+          pin_memory=True
           # prefetch_factor=2,
           # num_workers=2,
           )
@@ -36,7 +39,8 @@ def train_gnn(file_path, hidden_size, out_size, num_heads,sentence_in_size = 768
      T5_embed_layer_projector = nn.Linear(out_size, t5_model.config.d_model).to(device) ## size needed: (batch_size, sequence_length, hidden_size)
      optimizer = torch.optim.Adam(list(gnn_model.parameters()) + list(T5_embed_layer_projector.parameters()), lr=learning_rate)
      
-     print("CUDA usage after model loading: ", torch.cuda.memory_summary())
+     print(f"CUDA usage after model loading: {torch.cuda.memory_allocated()/1024**3:.2f} GB has used, remaining \
+               {torch.cuda.max_memory_allocated()/1024**3:.2f} GB available.")
      
      freeze_model(t5_model)
      t5_model.eval() ## no update for T5
@@ -62,7 +66,7 @@ def train_gnn(file_path, hidden_size, out_size, num_heads,sentence_in_size = 768
                
                ## labels calculate
                t5_embedding_matrix = t5_model.get_input_embeddings().weight  # (vocab_size, hidden_dim)
-               similarities = chunked_cosine_similarity(projected_embeddings, t5_embedding_matrix, chunk_size=16)
+               similarities = chunked_cosine_similarity(projected_embeddings, t5_embedding_matrix, chunk_size=8)
                top_k_values, top_k_indices = similarities.topk(k=5, dim=1)
                average_similarity = top_k_values.mean(dim=1)  # (batch_size,)
                abs_diff = torch.abs(similarities - average_similarity.unsqueeze(1))  # (batch_size, vocab_size)
@@ -71,7 +75,8 @@ def train_gnn(file_path, hidden_size, out_size, num_heads,sentence_in_size = 768
                labels = closest_token_ids.unsqueeze(1).expand(-1, seq_length)  # (batch_size, seq_length)
                labels = labels.long().to(device)  # make sure long type and GPU calculation
 
-               print("CUDA usage after batch calculation: ", torch.cuda.memory_summary())
+               print(f"CUDA usage after samples calculation: {torch.cuda.memory_allocated()/1024**3:.2f} GB has used, remaining \
+               {torch.cuda.max_memory_allocated()/1024**3:.2f} GB available.")
                
                outputs = t5_model(inputs_embeds=reshape_embeddings, labels=labels)
                loss = outputs.loss ## cross-entropy
@@ -87,6 +92,7 @@ def train_gnn(file_path, hidden_size, out_size, num_heads,sentence_in_size = 768
                ## del local variables
                del batch
                del labels
+               torch.cuda.empty_cache()
 
           print(f"Epoch {epoch+1}/{num_epochs}, Learning rate: {learning_rate}, Loss: {total_loss / len(train_dataloader)}")
 
@@ -101,6 +107,7 @@ def train_gnn(file_path, hidden_size, out_size, num_heads,sentence_in_size = 768
 
 def get_gnn_trained_embedding(evl_data_path, hidden_size, out_size, num_heads,sentence_in_size = 768, word_in_size = 768, feat_drop=0.2, attn_drop=0.2, batch_size=32):
      ## must be the same para of the train model
+     torch.cuda.empty_cache()
      gnn_model = RelHetGraph(hidden_size, out_size, num_heads, sentence_in_size, word_in_size , feat_drop, attn_drop).to(device)
      gnn_model.load_state_dict(torch.load('gnn_trained_weights.pth', weights_only=True))
      gnn_model.eval()
@@ -125,6 +132,7 @@ def get_gnn_trained_embedding(evl_data_path, hidden_size, out_size, num_heads,se
                summary_list.append(batch_summary)
                
                del batch_graph
+               torch.cuda.empty_cache()
 
      output_embeddings = torch.cat(output_embeddings, dim=0)
      merged_node_map_list = [item for sublist in node_sent_maps for item in sublist]
@@ -136,11 +144,22 @@ def chunked_cosine_similarity(embeddings, embedding_matrix, chunk_size=16):
      similarities = []
      for i in range(0, embeddings.size(0), chunk_size):
           chunk = embeddings[i:i + chunk_size]
-          sim = F.cosine_similarity(chunk.unsqueeze(1), embedding_matrix.unsqueeze(0), dim=2)
+          with torch.no_grad():
+               chunk = chunk.half()
+               embedding_matrix = embedding_matrix.half()
+               sim = F.cosine_similarity(
+                    chunk.unsqueeze(1),
+                    embedding_matrix.unsqueeze(0),
+                    dim=2
+               )
+               sim = sim.float()
+               
           similarities.append(sim.cpu())
           
           del chunk  # save gpu memory
           del sim
+          torch.cuda.empty_cache()
+          
      return torch.cat(similarities, dim=0)
 
 def custom_collate_fn(batch):
