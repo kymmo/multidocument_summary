@@ -1,7 +1,6 @@
 import torch
 import torch.nn as nn
-from torch.utils.data import DataLoader
-from transformers import T5Tokenizer, T5ForConditionalGeneration
+from transformers import EncoderDecoderCache
 
 from models.gnn_train_t5 import t5_tokenizer, t5_model
 
@@ -55,14 +54,21 @@ def get_t5_outputs(gnn_sent_embeddings, sample_node_sent_maps, summary_length = 
      )
      
      decoder_input_ids = t5_tokenizer("summarize:", return_tensors="pt").input_ids
-
+     encoder_cache = EncoderDecoderCache(
+          encoder_hidden_states=encoder_outputs.last_hidden_state,
+          encoder_attention_mask=summary_attention_mask
+     )
+     
      output = t5_model.generate(
           decoder_input_ids=decoder_input_ids,
-          encoder_outputs=encoder_outputs,
+          # encoder_outputs=encoder_outputs,
+          encoder_cache=encoder_cache,
           attention_mask=summary_attention_mask,
           max_length=summary_length,
           num_beams=3,
-          no_repeat_ngram_size=2
+          no_repeat_ngram_size=2,
+          # past_key_values=EncoderDecoderCache(),  # for transformers new version
+          use_cache=True
      )
 
      decoded_output = t5_tokenizer.decode(output[0], skip_special_tokens=True)

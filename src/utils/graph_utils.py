@@ -19,8 +19,7 @@ def get_embed_graph(file_path):
      print(f"Finish graph creation, time cost:  {end - start:.4f} s.")
      
      clean_memory()
-     print(f"CUDA usage after graph embedding: {torch.cuda.memory_allocated()/1024**3:.2f} GB has used, remaining \
-               {torch.cuda.max_memory_allocated()/1024**3:.2f} GB available.")
+     print(f"CUDA usage after graph embedding: {torch.cuda.memory_allocated()/1024**3:.2f} GB has used, remaining {torch.cuda.max_memory_allocated()/1024**3:.2f} GB available.")
      return sample_graphs
 
 def get_embed_graph_node_map(file_path):
@@ -30,8 +29,7 @@ def get_embed_graph_node_map(file_path):
      print(f"Finish graph creation")
      
      clean_memory()
-     print(f"CUDA usage after graph embedding: {torch.cuda.memory_allocated()/1024**3:.2f} GB has used, remaining \
-               {torch.cuda.max_memory_allocated()/1024**3:.2f} GB available.")
+     print(f"CUDA usage after graph embedding: {torch.cuda.memory_allocated()/1024**3:.2f} GB has used, remaining {torch.cuda.max_memory_allocated()/1024**3:.2f} GB available.")
      return sample_graphs, node_maps, summary_list
 
 def create_embed_graphs(docs_list, sent_similarity = 0.6):

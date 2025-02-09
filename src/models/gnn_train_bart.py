@@ -7,13 +7,14 @@ from torch.utils.data import DataLoader as data_DataLoader
 from transformers import BartTokenizer, BartForConditionalGeneration
 
 from models.RelHetGraph import RelHetGraph
-from models.DatasetLoader import SummaryDataset, EvalDataset
-from utils.model_utils import freeze_model
+from models.DatasetLoader import OptimizedDataset, EvalDataset
+from utils.model_utils import freeze_model,clean_memory
 
 large_model = "facebook/bart-large"
-small_model = "facebook/bart-base" #for test
+small_model = "facebook/bart-base"
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 bart_tokenizer = BartTokenizer.from_pretrained(small_model)
-bart_model = BartForConditionalGeneration.from_pretrained(small_model)
+bart_model = BartForConditionalGeneration.from_pretrained(small_model).to(device)
 
 def train_gnn_bart_loss(file_path, hidden_size, out_size, num_heads,sentence_in_size = 768, word_in_size = 768, learning_rate=0.001, num_epochs=20, feat_drop=0.2, attn_drop=0.2, batch_size=32):
      """Trains the HetGNN model using a proxy task."""
@@ -21,7 +22,7 @@ def train_gnn_bart_loss(file_path, hidden_size, out_size, num_heads,sentence_in_
      print(f"Runing on {device}")
      
      print(f"Start loading dataset...")
-     train_dataset = SummaryDataset(file_path)
+     train_dataset = OptimizedDataset(file_path)
      train_dataloader = geo_DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
      print(f"Dataset load successfully!")
      

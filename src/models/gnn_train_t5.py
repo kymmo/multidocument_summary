@@ -7,7 +7,7 @@ from torch.utils.data import DataLoader as data_DataLoader
 from transformers import T5Tokenizer, T5ForConditionalGeneration
 
 from models.RelHetGraph import RelHetGraph
-from models.DatasetLoader import SummaryDataset, EvalDataset, OptimizedDataset
+from models.DatasetLoader import EvalDataset, OptimizedDataset
 from utils.model_utils import freeze_model, clean_memory
 
 base_model = "google-t5/t5-base"
@@ -38,8 +38,7 @@ def train_gnn(file_path, hidden_size, out_size, num_heads,sentence_in_size = 768
      T5_embed_layer_projector = nn.Linear(out_size, t5_model.config.d_model).to(device) ## size needed: (batch_size, sequence_length, hidden_size)
      optimizer = torch.optim.Adam(list(gnn_model.parameters()) + list(T5_embed_layer_projector.parameters()), lr=learning_rate)
      
-     print(f"CUDA usage after model loading: {torch.cuda.memory_allocated()/1024**3:.2f} GB has used, remaining \
-               {torch.cuda.max_memory_allocated()/1024**3:.2f} GB available.")
+     print(f"CUDA usage after model loading: {torch.cuda.memory_allocated()/1024**3:.2f} GB has used, remaining {torch.cuda.max_memory_allocated()/1024**3:.2f} GB available.")
      
      freeze_model(t5_model)
      t5_model.eval() ## no update for T5
@@ -74,9 +73,6 @@ def train_gnn(file_path, hidden_size, out_size, num_heads,sentence_in_size = 768
                labels = closest_token_ids.unsqueeze(1).expand(-1, seq_length)  # (batch_size, seq_length)
                labels = labels.long().to(device)  # make sure long type and GPU calculation
 
-               print(f"CUDA usage after samples calculation: {torch.cuda.memory_allocated()/1024**3:.2f} GB has used, remaining \
-               {torch.cuda.max_memory_allocated()/1024**3:.2f} GB available.")
-               
                outputs = t5_model(inputs_embeds=reshape_embeddings, labels=labels)
                loss = outputs.loss ## cross-entropy
                # ## distribution

@@ -4,9 +4,10 @@ from torch.utils.data import DataLoader
 from transformers import BartTokenizer, BartForConditionalGeneration
 
 large_model = "facebook/bart-large"
-small_model = "facebook/bart-base" #for test
+small_model = "facebook/bart-base"
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 bart_tokenizer = BartTokenizer.from_pretrained(small_model)
-bart_model = BartForConditionalGeneration.from_pretrained(small_model)
+bart_model = BartForConditionalGeneration.from_pretrained(small_model).to(device)
 
 def get_bart_outputs(gnn_sent_embeddings, sample_node_sent_maps, summary_length = 200, sequence_length = 512):
      sent_list = []
