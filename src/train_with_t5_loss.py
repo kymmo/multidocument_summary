@@ -27,7 +27,7 @@ def model_train_and_eval_t5(dataset_path):
           sentence_in_size = 768, 
           word_in_size = 768,
           learning_rate=0.001, 
-          num_epochs=20,
+          num_epochs=10,
           feat_drop=0.2, 
           attn_drop=0.2, 
           batch_size=32

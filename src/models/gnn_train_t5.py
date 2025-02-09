@@ -89,7 +89,6 @@ def train_gnn(file_path, hidden_size, out_size, num_heads,sentence_in_size = 768
                del labels
                clean_memory()
                
-               ##TODO: early stopping
           print(f"Epoch {epoch+1}/{num_epochs}, Learning rate: {learning_rate}, Loss: {total_loss / len(train_dataloader)}")
 
      torch.save(gnn_model.state_dict(), 'gnn_trained_weights.pth')
