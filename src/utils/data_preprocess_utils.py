@@ -126,7 +126,6 @@ def extract_keywords(documents_list, words_per_100=1, min_keywords=2, max_keywor
           keywords_list.append(keywords)
      
      del kw_model
-     torch.cuda.empty_cache()
      
      return keywords_list
 

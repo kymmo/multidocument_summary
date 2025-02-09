@@ -8,7 +8,7 @@ from transformers import T5Tokenizer, T5ForConditionalGeneration
 
 from models.RelHetGraph import RelHetGraph
 from models.DatasetLoader import SummaryDataset, EvalDataset, OptimizedDataset
-from utils.model_utils import freeze_model
+from utils.model_utils import freeze_model, clean_memory
 
 base_model = "google-t5/t5-base"
 small_model = "google-t5/t5-small" #for test
@@ -19,8 +19,7 @@ t5_model = T5ForConditionalGeneration.from_pretrained(base_model).to(device)
 
 def train_gnn(file_path, hidden_size, out_size, num_heads,sentence_in_size = 768, word_in_size = 768, learning_rate=0.001, num_epochs=20, feat_drop=0.2, attn_drop=0.2, batch_size=16):
      """Trains the HetGNN model using a proxy task."""
-     # clear previous cache
-     torch.cuda.empty_cache()
+     clean_memory()
      print(f"Task runing on {device}")
 
      print(f"Start loading sample graphs...")
@@ -92,7 +91,7 @@ def train_gnn(file_path, hidden_size, out_size, num_heads,sentence_in_size = 768
                ## del local variables
                del batch
                del labels
-               torch.cuda.empty_cache()
+               clean_memory()
 
           print(f"Epoch {epoch+1}/{num_epochs}, Learning rate: {learning_rate}, Loss: {total_loss / len(train_dataloader)}")
 
@@ -103,6 +102,7 @@ def train_gnn(file_path, hidden_size, out_size, num_heads,sentence_in_size = 768
      
      del gnn_model
      del T5_embed_layer_projector
+     clean_memory()
      
 
 def get_gnn_trained_embedding(evl_data_path, hidden_size, out_size, num_heads,sentence_in_size = 768, word_in_size = 768, feat_drop=0.2, attn_drop=0.2, batch_size=32):
@@ -132,7 +132,7 @@ def get_gnn_trained_embedding(evl_data_path, hidden_size, out_size, num_heads,se
                summary_list.append(batch_summary)
                
                del batch_graph
-               torch.cuda.empty_cache()
+               clean_memory()
 
      output_embeddings = torch.cat(output_embeddings, dim=0)
      merged_node_map_list = [item for sublist in node_sent_maps for item in sublist]
@@ -145,8 +145,8 @@ def chunked_cosine_similarity(embeddings, embedding_matrix, chunk_size=16):
      for i in range(0, embeddings.size(0), chunk_size):
           chunk = embeddings[i:i + chunk_size]
           with torch.no_grad():
-               chunk = chunk.half()
-               embedding_matrix = embedding_matrix.half()
+               chunk = chunk.half().contiguous()
+               embedding_matrix = embedding_matrix.half().contiguous()
                sim = F.cosine_similarity(
                     chunk.unsqueeze(1),
                     embedding_matrix.unsqueeze(0),
