@@ -2,10 +2,11 @@ import networkx as nx
 import torch
 import time
 from transformers import BertTokenizer, BertModel, BertConfig
+from sentence_transformers import SentenceTransformer
 from torch_geometric.data import HeteroData
 from contextlib import contextmanager
 
-from utils.data_preprocess_utils import define_node_edge, load_jsonl, sentBERT_model
+from utils.data_preprocess_utils import define_node_edge, load_jsonl
 from utils.model_utils import clean_memory
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -84,6 +85,8 @@ def load_bert_models(models_info, device):
                     models[model_type] = BertModel(bert_config_rel).to(device)
                elif model_type == 'tokenizer':
                     models[model_type] = BertTokenizer.from_pretrained(model_name)
+               elif model_type == 'sent_bert':
+                    models[model_type] = SentenceTransformer(model_name, device=device)
                else:
                     raise ValueError(f"Unsupported model type: {model_type}")
           
@@ -101,7 +104,8 @@ def embed_nodes_gpu(graphs, sentid_node_map_list):
           'normal': 'bert-base-uncased',
           'abs_pos': 'bert-base-uncased',
           'rel_pos': 'bert-base-uncased',
-          'tokenizer': 'bert-base-uncased'
+          'tokenizer': 'bert-base-uncased',
+          'sent_bert': 'all-MiniLM-L6-v2',
      }
      embedded_graphs = []
 
@@ -110,10 +114,9 @@ def embed_nodes_gpu(graphs, sentid_node_map_list):
           bert_relative_model = models["rel_pos"]
           bert_tokenizer = models["tokenizer"]
           bert_model = models["normal"]
+          sentBERT_model = models["sent_bert"]
           
           sent_node_embedding_map_list = get_sent_pos_encoding(sentid_node_map_list, bert_abs_model, bert_relative_model)
-          global sentBERT_model
-          
           for graph, sent_node_embedding_map in zip(graphs, sent_node_embedding_map_list):
                sentences = [data['text'][2] for node, data in graph.nodes(data=True) if data['type'] == 'sentence']
                if sentences:

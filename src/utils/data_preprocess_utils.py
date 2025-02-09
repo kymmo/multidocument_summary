@@ -11,13 +11,10 @@ from functools import wraps
 import traceback
 import os
 
-
 # Load models - this should be done only once
 nlp_coref = spacy.load("en_core_web_lg")
 nlp_coref.add_pipe('coreferee')
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-sentBERT_model = SentenceTransformer('all-MiniLM-L6-v2', device=device)
-
 
 def load_jsonl(file_path):
      """  Loads data from a JSONL file with the correct multi-document format.
@@ -95,7 +92,7 @@ def optimized_split_doc_sent(text):
      doc = nlp_coref(text.strip())
      return [sent.text for sent in doc.sents]
 
-def extract_keywords(documents_list, words_per_100=1, min_keywords=2, max_keywords=15):
+def extract_keywords(documents_list,sentBERT_model, words_per_100=1, min_keywords=2, max_keywords=15):
      """extract key word from each document, default 10 words
 
      Args:
@@ -231,11 +228,12 @@ def define_node_edge(documents_list, edge_similarity_threshold = 0.6):
      Returns:
           _type_:  word_node_map, sent_node_map, edge list, sentid_nodeid_map
      """
-     
+     sentBERT_model = SentenceTransformer('all-MiniLM-L6-v2', device=device)
+
      print("Start preprocessing...")
      start_time = time.time()
      docs_sents_obj_list = split_sentences_pipe(documents_list)
-     docs_kws_scores_list = extract_keywords(documents_list)
+     docs_kws_scores_list = extract_keywords(documents_list, sentBERT_model)
      docs_corefs_list = coref_resolve2(documents_list)
      end_time = time.time()
      print(f"Finish preprocessing, time cost:  {end_time - start_time:.4f} s.")
@@ -244,7 +242,6 @@ def define_node_edge(documents_list, edge_similarity_threshold = 0.6):
      word_node_list = []
      sent_node_list = []
      sentId_nodeId_list = []
-     global sentBERT_model
      for training_idx, (docs_sent_objs, docs_kws_scores, docs_corefs) in enumerate(zip(docs_sents_obj_list, docs_kws_scores_list, docs_corefs_list)):
           node_index = 0
           
@@ -331,5 +328,7 @@ def define_node_edge(documents_list, edge_similarity_threshold = 0.6):
           word_node_list.append(word_nodeId_map)
           sent_node_list.append(sent_nodeId_map)
           sentId_nodeId_list.append(sentId_nodeId_map)
+     
+     del sentBERT_model
      
      return word_node_list, sent_node_list, edge_data_list, sentId_nodeId_list

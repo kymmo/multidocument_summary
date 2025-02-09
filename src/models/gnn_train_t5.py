@@ -17,7 +17,7 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 t5_tokenizer = T5Tokenizer.from_pretrained(base_model)
 t5_model = T5ForConditionalGeneration.from_pretrained(base_model).to(device)
 
-def train_gnn(file_path, hidden_size, out_size, num_heads,sentence_in_size = 768, word_in_size = 768, learning_rate=0.001, num_epochs=20, feat_drop=0.2, attn_drop=0.2, batch_size=16):
+def train_gnn(file_path, hidden_size, out_size, num_heads,sentence_in_size = 768, word_in_size = 768, learning_rate=0.001, num_epochs=20, feat_drop=0.2, attn_drop=0.2, batch_size=32):
      """Trains the HetGNN model using a proxy task."""
      clean_memory()
      print(f"Task runing on {device}")
@@ -88,7 +88,8 @@ def train_gnn(file_path, hidden_size, out_size, num_heads,sentence_in_size = 768
                del batch
                del labels
                clean_memory()
-
+               
+               ##TODO: early stopping
           print(f"Epoch {epoch+1}/{num_epochs}, Learning rate: {learning_rate}, Loss: {total_loss / len(train_dataloader)}")
 
      torch.save(gnn_model.state_dict(), 'gnn_trained_weights.pth')

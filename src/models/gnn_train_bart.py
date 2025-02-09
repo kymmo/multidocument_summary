@@ -16,25 +16,27 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 bart_tokenizer = BartTokenizer.from_pretrained(small_model)
 bart_model = BartForConditionalGeneration.from_pretrained(small_model).to(device)
 
+###TODO: optimize the train function structure to combine two models loss training
 def train_gnn_bart_loss(file_path, hidden_size, out_size, num_heads,sentence_in_size = 768, word_in_size = 768, learning_rate=0.001, num_epochs=20, feat_drop=0.2, attn_drop=0.2, batch_size=32):
      """Trains the HetGNN model using a proxy task."""
-     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+     clean_memory()
      print(f"Runing on {device}")
      
      print(f"Start loading dataset...")
      train_dataset = OptimizedDataset(file_path)
-     train_dataloader = geo_DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+     train_dataloader = geo_DataLoader(train_dataset, batch_size=batch_size, shuffle=True, pin_memory=True)
      print(f"Dataset load successfully!")
      
-     print(f"Setting finish. Start training epoch...")
      gnn_model = RelHetGraph(hidden_size, out_size, num_heads, sentence_in_size, word_in_size , feat_drop, attn_drop).to(device)
      BART_embed_layer_projector = nn.Linear(out_size, bart_model.config.d_model).to(device) ## size needed: (batch_size, sequence_length, hidden_size)
      optimizer = torch.optim.Adam(list(gnn_model.parameters()) + list(BART_embed_layer_projector.parameters()), lr=learning_rate)
      
+     print(f"CUDA usage after model loading: {torch.cuda.memory_allocated()/1024**3:.2f} GB has used, remaining {torch.cuda.max_memory_allocated()/1024**3:.2f} GB available.")
+
      freeze_model(bart_model)
      bart_model.eval() ## no update for model
      gnn_model.train() ## set to train mode
-     print("GNN Training Finish.")
+     print(f"Setting finish. Start training epoch...")
      for epoch in range(num_epochs):
           total_loss = 0
           for batch in train_dataloader:
@@ -62,18 +64,17 @@ def train_gnn_bart_loss(file_path, hidden_size, out_size, num_heads,sentence_in_
                closest_token_ids = abs_diff.argmin(dim=1)  # (batch_size,)
                seq_length = reshape_embeddings.size(1)
                labels = closest_token_ids.unsqueeze(1).expand(-1, seq_length)  # (batch_size, seq_length)
-               labels = labels.long() # make sure long type
+               labels = labels.long().to(device) # make sure long type
 
                outputs = bart_model(inputs_embeds=reshape_embeddings, labels=labels)
-               loss = outputs.loss ## cross-entropy
-               # ## distribution
-               # logits = outputs.logits
-               # log_probs = F.log_softmax(logits, dim=-1)
-               # loss = F.kl_div(log_probs, labels, reduction='batchmean')
-
+               loss = outputs.loss
                loss.backward()
                optimizer.step()
                total_loss += loss.item()
+               
+               del batch
+               del labels
+               clean_memory()
 
           print(f"Epoch {epoch+1}/{num_epochs}, Learning rate: {learning_rate}, Loss: {total_loss / len(train_dataloader)}")
 
@@ -82,7 +83,9 @@ def train_gnn_bart_loss(file_path, hidden_size, out_size, num_heads,sentence_in_
      
      print("GNN Training Finish.")
      
-     return gnn_model
+     del gnn_model
+     del T5_embed_layer_projector
+     clean_memory()
 
 def get_gnn_bart_trained_embedding(evl_data_path, hidden_size, out_size, num_heads,sentence_in_size = 768, word_in_size = 768, feat_drop=0.2, attn_drop=0.2, batch_size=32):
      device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
