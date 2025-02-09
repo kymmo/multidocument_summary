@@ -333,6 +333,6 @@ def define_node_edge(documents_list, edge_similarity_threshold = 0.6):
      ## before return. clear gpu model
      del sentBERT_model
      del kw_model
-     print(torch.cuda.memory_summary())
+     print("CUDA usage after preprocess: ", torch.cuda.memory_summary())
      
      return word_node_list, sent_node_list, edge_data_list, sentId_nodeId_list
