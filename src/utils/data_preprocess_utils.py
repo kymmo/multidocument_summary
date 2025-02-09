@@ -7,7 +7,6 @@ import time
 from collections import defaultdict
 from sentence_transformers import SentenceTransformer
 from concurrent.futures import ProcessPoolExecutor
-from concurrent.futures import ProcessPoolExecutor
 from functools import wraps
 import traceback
 import os
@@ -18,7 +17,6 @@ nlp_coref = spacy.load("en_core_web_lg")
 nlp_coref.add_pipe('coreferee')
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 sentBERT_model = SentenceTransformer('all-MiniLM-L6-v2', device=device)
-kw_model = KeyBERT(model=sentBERT_model)
 
 
 def load_jsonl(file_path):
@@ -38,7 +36,6 @@ def load_jsonl(file_path):
                     print(f"Skipping invalid JSON line: {line}")
      
      return documents_list, summary_list
-
 
 def split_sentences_pipe(documents_list):
      """Splits sentences in each document within the list.
@@ -109,13 +106,14 @@ def extract_keywords(documents_list, words_per_100=1, min_keywords=2, max_keywor
      """
      
      keywords_list = []
+     kw_model = KeyBERT(model=sentBERT_model)
+
      for documents in documents_list:
           ## dynamic top_n
           avg_length = sum(len(doc) for doc in documents) // len(documents)
           top_n = max(min_keywords, min(max_keywords, (avg_length // 100) * words_per_100))
           documents = [doc[0] for doc in documents] ## convert to string list
           
-          global kw_model
           keywords = kw_model.extract_keywords(
                documents,
                top_n=top_n,
@@ -126,7 +124,9 @@ def extract_keywords(documents_list, words_per_100=1, min_keywords=2, max_keywor
           )
           
           keywords_list.append(keywords)
-          
+     
+     del kw_model
+     
      return keywords_list
 
 def coref_resolve(documents_list):
@@ -333,7 +333,6 @@ def define_node_edge(documents_list, edge_similarity_threshold = 0.6):
           sentId_nodeId_list.append(sentId_nodeId_map)
      
      ## before return. clear gpu model
-     del kw_model
      print("CUDA usage after preprocess: ", torch.cuda.memory_summary())
      
      return word_node_list, sent_node_list, edge_data_list, sentId_nodeId_list
