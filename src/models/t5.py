@@ -26,7 +26,7 @@ def get_t5_outputs(gnn_sent_embeddings, sample_node_sent_maps, summary_length = 
      avg_t5_embeddings = avg_t5_embeddings.to(device)
      
      ## project GNN embeddin to T5 space
-     out_size = gnn_sent_embeddings.shape[1].to(device)
+     out_size = gnn_sent_embeddings.shape[1]
      T5_embed_projector = nn.Linear(out_size, t5_model.config.d_model).to(device)
      T5_embed_projector.load_state_dict(torch.load('t5_projector_weights.pth', weights_only=True))
      projected_gnn_embeddings = T5_embed_projector(gnn_sent_embeddings)
