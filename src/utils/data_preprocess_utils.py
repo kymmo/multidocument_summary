@@ -115,6 +115,7 @@ def extract_keywords(documents_list, words_per_100=1, min_keywords=2, max_keywor
           top_n = max(min_keywords, min(max_keywords, (avg_length // 100) * words_per_100))
           documents = [doc[0] for doc in documents] ## convert to string list
           
+          global kw_model
           keywords = kw_model.extract_keywords(
                documents,
                top_n=top_n,
@@ -243,6 +244,7 @@ def define_node_edge(documents_list, edge_similarity_threshold = 0.6):
      word_node_list = []
      sent_node_list = []
      sentId_nodeId_list = []
+     global sentBERT_model
      for training_idx, (docs_sent_objs, docs_kws_scores, docs_corefs) in enumerate(zip(docs_sents_obj_list, docs_kws_scores_list, docs_corefs_list)):
           node_index = 0
           
@@ -331,7 +333,6 @@ def define_node_edge(documents_list, edge_similarity_threshold = 0.6):
           sentId_nodeId_list.append(sentId_nodeId_map)
      
      ## before return. clear gpu model
-     del sentBERT_model
      del kw_model
      print("CUDA usage after preprocess: ", torch.cuda.memory_summary())
      

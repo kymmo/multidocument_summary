@@ -1,5 +1,4 @@
 import os
-import torch
 from pathlib import Path
 
 from models.gnn_train_t5 import train_gnn, get_gnn_trained_embedding

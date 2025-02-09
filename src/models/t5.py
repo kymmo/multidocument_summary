@@ -3,11 +3,7 @@ import torch.nn as nn
 from torch.utils.data import DataLoader
 from transformers import T5Tokenizer, T5ForConditionalGeneration
 
-## t5 model here must be the same structure as t5_model defined in gnn_train.py
-base_model = "google-t5/t5-base"
-small_model = "google-t5/t5-small" #for test
-t5_tokenizer = T5Tokenizer.from_pretrained(base_model)
-t5_model = T5ForConditionalGeneration.from_pretrained(base_model)
+from models.gnn_train_t5 import t5_tokenizer, t5_model
 
 def get_t5_outputs(gnn_sent_embeddings, sample_node_sent_maps, summary_length = 200, sequence_length = 512):
      sent_list = []

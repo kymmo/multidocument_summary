@@ -2,16 +2,13 @@ import networkx as nx
 import torch
 import time
 from transformers import BertTokenizer, BertModel, BertConfig
-from sentence_transformers import SentenceTransformer
 from torch_geometric.data import HeteroData
-# from sklearn.decomposition import PCA
 
-from utils.data_preprocess_utils import define_node_edge, load_jsonl
+from utils.data_preprocess_utils import define_node_edge, load_jsonl, sentBERT_model
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 bert_tokenizer = BertTokenizer.from_pretrained("bert-base-uncased")
 bert_model = BertModel.from_pretrained("bert-base-uncased").to(device)
-sentBERT_model = SentenceTransformer('all-MiniLM-L6-v2').to(device)
 
 bert_config = BertConfig.from_pretrained("bert-base-uncased")
 bert_config.position_embedding_type = "absolute"
@@ -75,7 +72,7 @@ def embed_nodes_gpu(graphs, sentid_node_map_list):
      """Embeds nodes in the graph using SBERT, BERT, and positional embeddings."""
      embedded_graphs = []
      sent_node_embedding_map_list = get_sent_pos_encoding(sentid_node_map_list)
-
+     global sentBERT_model
      for graph, sent_node_embedding_map in zip(graphs, sent_node_embedding_map_list):
           sentences = [data['text'][2] for node, data in graph.nodes(data=True) if data['type'] == 'sentence']
           if sentences:
