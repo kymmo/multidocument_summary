@@ -9,15 +9,26 @@ def get_t5_outputs(gnn_sent_embeddings, sample_node_sent_maps, summary_length = 
      for doc_node_sent_map in sample_node_sent_maps:
           for id in range(len(doc_node_sent_map)):
                sent_list.append(doc_node_sent_map[id])
-     
-     ## get T5 embeddings
-     inputs = t5_tokenizer(sent_list, return_tensors="pt", padding=True, truncation=True)
+
+     ## get T5 embeddings. ##TODO: deal with long text
+     inputs = t5_tokenizer(
+          sent_list, 
+          return_tensors="pt", 
+          padding=True, 
+          truncation=True, 
+          model_max_length=sequence_length,
+          padding='longest'
+     )
      input_ids = inputs['input_ids'].to(device)
      attention_mask = inputs['attention_mask'].to(device)
 
      t5_model.eval()
      with torch.no_grad():
-          encoder_outputs = t5_model.encoder(input_ids, attention_mask=attention_mask)
+          encoder_outputs = t5_model.encoder(
+               input_ids, 
+               attention_mask=attention_mask,
+               use_cache=True
+          )
 
      t5_embeddings = encoder_outputs.last_hidden_state
      # ignore paddding
@@ -25,7 +36,7 @@ def get_t5_outputs(gnn_sent_embeddings, sample_node_sent_maps, summary_length = 
      avg_t5_embeddings = masked_embeddings.sum(dim=1) / attention_mask.sum(dim=1, keepdim=True) ## (sentence_number, embedding)
      avg_t5_embeddings = avg_t5_embeddings.to(device)
      
-     ## project GNN embeddin to T5 space
+     ## project GNN embedding to T5 space
      out_size = gnn_sent_embeddings.shape[1]
      T5_embed_projector = nn.Linear(out_size, t5_model.config.d_model).to(device)
      T5_embed_projector.load_state_dict(torch.load('t5_projector_weights.pth', weights_only=True))
@@ -44,36 +55,38 @@ def get_t5_outputs(gnn_sent_embeddings, sample_node_sent_maps, summary_length = 
 
      if remaining != 0:
           padding_size = sequence_length - remaining
-          padding_tensor = torch.zeros(padding_size, embedding_length).to(device) ## padding by zeroes
+          padding_tensor = torch.zeros(padding_size, embedding_length).to(device)
           combined_embeddings = torch.cat([combined_embeddings, padding_tensor], dim=0)
 
      reshaped_tensor = combined_embeddings.view(batch_size + 1, sequence_length, embedding_length).to(device)
-     summary_attention_mask = torch.ones(batch_size + 1, sequence_length).to(device)
+     summary_attention_mask = torch.ones(batch_size + 1, sequence_length).to(device) ## one sequence represent one sentence
      
-     encoder_outputs = t5_model.encoder(
-          attention_mask=summary_attention_mask,
-          inputs_embeds=reshaped_tensor
-     )
+     with torch.no_grad():
+          encoder_outputs = t5_model.encoder(
+               attention_mask=summary_attention_mask,
+               inputs_embeds=reshaped_tensor,
+               return_dict=True,
+               use_cache=True
+          )
      
      decoder_input_ids = t5_tokenizer("summarize:", return_tensors="pt").input_ids.to(device)
-     encoder_cache = EncoderDecoderCache(
-          encoder_hidden_states=encoder_outputs.last_hidden_state,
-          encoder_attention_mask=summary_attention_mask
-     )
+     encoder_cache = EncoderDecoderCache.from_legacy_cache(encoder_outputs.past_key_values)
      
      output = t5_model.generate(
           decoder_input_ids=decoder_input_ids,
-          # encoder_outputs=encoder_outputs,
-          encoder_cache=encoder_cache,
+          past_key_values=encoder_cache,
           attention_mask=summary_attention_mask,
           max_length=summary_length,
           num_beams=3,
           no_repeat_ngram_size=2,
-          # past_key_values=EncoderDecoderCache(),  # for transformers new version
           use_cache=True
      )
 
-     decoded_output = t5_tokenizer.decode(output[0], skip_special_tokens=True)
+     decoded_output = t5_tokenizer.decode(
+          output[0], 
+          skip_special_tokens=True,
+          clean_up_tokenization_spaces=True
+          )
      
      return decoded_output
 
