@@ -6,6 +6,7 @@ from models.gnn_train_t5 import t5_tokenizer, t5_model, device
 
 def get_t5_outputs(gnn_sent_embeddings, sample_node_sent_maps, summary_length = 200, sequence_length = 512):
      sent_list = []
+     sent_list.append("summarize: ")
      for doc_node_sent_map in sample_node_sent_maps:
           for id in range(len(doc_node_sent_map)):
                sent_list.append(doc_node_sent_map[id])
@@ -27,7 +28,6 @@ def get_t5_outputs(gnn_sent_embeddings, sample_node_sent_maps, summary_length = 
                input_ids, 
                attention_mask=attention_mask,
                return_dict=True,
-               use_cache=True
           )
 
      t5_embeddings = encoder_sent_outputs.last_hidden_state
@@ -49,7 +49,6 @@ def get_t5_outputs(gnn_sent_embeddings, sample_node_sent_maps, summary_length = 
      combined_embeddings = projected_gnn_embeddings + avg_t5_embeddings
      
      comb_embed_size = combined_embeddings.shape
-     ##reshape to input T5
      sample_length = comb_embed_size[0]
      embedding_length = comb_embed_size[1]
      batch_size = sample_length // sequence_length
@@ -59,25 +58,20 @@ def get_t5_outputs(gnn_sent_embeddings, sample_node_sent_maps, summary_length = 
           padding_size = sequence_length - remaining
           padding_tensor = torch.zeros(padding_size, embedding_length).to(device)
           combined_embeddings = torch.cat([combined_embeddings, padding_tensor], dim=0)
+          new_batch_size = batch_size + 1
 
-     reshaped_tensor = combined_embeddings.view(batch_size + 1, sequence_length, embedding_length).to(device)
-     embedding_mask = torch.ones(batch_size, sequence_length)
-     padding_mask_1d = torch.cat((torch.ones(remaining), torch.zeros(padding_size)))
-     padding_mask = padding_mask_1d.view(1, sequence_length)
-     summary_attention_mask = torch.cat([embedding_mask, padding_mask], dim = 0).to(device) ## one sequence represent one sentence
+          reshaped_tensor = combined_embeddings.view(new_batch_size, sequence_length, embedding_length).to(device)
+          
+          full_mask = torch.ones(batch_size, sequence_length)
+          padding_mask = torch.cat((torch.ones(remaining), torch.zeros(padding_size))).view(1, sequence_length)
+          summary_attention_mask = torch.cat([full_mask, padding_mask], dim=0).to(device)
+     else: ## one sequence represent one sentence
+          reshaped_tensor = combined_embeddings.view(batch_size, sequence_length, embedding_length).to(device)
+          summary_attention_mask = torch.ones(batch_size, sequence_length).to(device)
 
-     decoder_input_ids = t5_tokenizer(
-          "summarize:", 
-          return_tensors="pt",
-          add_special_tokens=True,
-          max_length=32,
-          truncation=True
-     ).input_ids.to(device)
-     
      output = t5_model.generate(
           inputs_embeds=reshaped_tensor,
           attention_mask=summary_attention_mask,
-          decoder_input_ids=decoder_input_ids,
           max_length=summary_length,
           num_beams=3,
           no_repeat_ngram_size=2,
