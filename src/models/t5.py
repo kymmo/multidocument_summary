@@ -17,7 +17,6 @@ def get_t5_outputs(gnn_sent_embeddings, sample_node_sent_maps, summary_length = 
           padding=True, 
           truncation=True, 
           model_max_length=sequence_length,
-          padding='longest'
      )
      input_ids = inputs['input_ids'].to(device)
      attention_mask = inputs['attention_mask'].to(device)
@@ -27,7 +26,6 @@ def get_t5_outputs(gnn_sent_embeddings, sample_node_sent_maps, summary_length = 
           encoder_outputs = t5_model.encoder(
                input_ids, 
                attention_mask=attention_mask,
-               use_cache=True
           )
 
      t5_embeddings = encoder_outputs.last_hidden_state
@@ -65,8 +63,6 @@ def get_t5_outputs(gnn_sent_embeddings, sample_node_sent_maps, summary_length = 
           encoder_outputs = t5_model.encoder(
                attention_mask=summary_attention_mask,
                inputs_embeds=reshaped_tensor,
-               return_dict=True,
-               use_cache=True
           )
      
      decoder_input_ids = t5_tokenizer("summarize:", return_tensors="pt").input_ids.to(device)
