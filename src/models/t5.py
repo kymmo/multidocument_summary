@@ -14,21 +14,23 @@ def get_t5_outputs(gnn_sent_embeddings, sample_node_sent_maps, summary_length = 
      inputs = t5_tokenizer(
           sent_list, 
           return_tensors="pt", 
-          padding=True, 
+          padding='max_length',
           truncation=True, 
-          model_max_length=sequence_length,
+          max_length=sequence_length
      )
      input_ids = inputs['input_ids'].to(device)
      attention_mask = inputs['attention_mask'].to(device)
 
      t5_model.eval()
-     with torch.no_grad():
-          encoder_outputs = t5_model.encoder(
+     with torch.no_grad(): ## encode text infor
+          encoder_sent_outputs = t5_model.encoder(
                input_ids, 
                attention_mask=attention_mask,
+               return_dict=True,
+               use_cache=True
           )
 
-     t5_embeddings = encoder_outputs.last_hidden_state
+     t5_embeddings = encoder_sent_outputs.last_hidden_state
      # ignore paddding
      masked_embeddings = t5_embeddings * attention_mask.unsqueeze(-1)
      avg_t5_embeddings = masked_embeddings.sum(dim=1) / attention_mask.sum(dim=1, keepdim=True) ## (sentence_number, embedding)
@@ -37,9 +39,11 @@ def get_t5_outputs(gnn_sent_embeddings, sample_node_sent_maps, summary_length = 
      ## project GNN embedding to T5 space
      out_size = gnn_sent_embeddings.shape[1]
      T5_embed_projector = nn.Linear(out_size, t5_model.config.d_model).to(device)
-     T5_embed_projector.load_state_dict(torch.load('t5_projector_weights.pth', weights_only=True))
-     projected_gnn_embeddings = T5_embed_projector(gnn_sent_embeddings)
-     projected_gnn_embeddings = projected_gnn_embeddings.to(device)
+     T5_embed_projector.load_state_dict(
+          torch.load('t5_projector_weights.pth', weights_only=True, map_location=device),
+          strict=True
+     )
+     projected_gnn_embeddings = T5_embed_projector(gnn_sent_embeddings.to(device))
      
      ## combine GNN and T5 embedding
      combined_embeddings = projected_gnn_embeddings + avg_t5_embeddings
@@ -57,32 +61,39 @@ def get_t5_outputs(gnn_sent_embeddings, sample_node_sent_maps, summary_length = 
           combined_embeddings = torch.cat([combined_embeddings, padding_tensor], dim=0)
 
      reshaped_tensor = combined_embeddings.view(batch_size + 1, sequence_length, embedding_length).to(device)
-     summary_attention_mask = torch.ones(batch_size + 1, sequence_length).to(device) ## one sequence represent one sentence
-     
-     with torch.no_grad():
-          encoder_outputs = t5_model.encoder(
-               attention_mask=summary_attention_mask,
-               inputs_embeds=reshaped_tensor,
-          )
-     
-     decoder_input_ids = t5_tokenizer("summarize:", return_tensors="pt").input_ids.to(device)
-     encoder_cache = EncoderDecoderCache.from_legacy_cache(encoder_outputs.past_key_values)
+     embedding_mask = torch.ones(batch_size, sequence_length)
+     padding_mask_1d = torch.cat((torch.ones(remaining), torch.zeros(padding_size)))
+     padding_mask = padding_mask_1d.view(1, sequence_length)
+     summary_attention_mask = torch.cat([embedding_mask, padding_mask], dim = 0).to(device) ## one sequence represent one sentence
+
+     decoder_input_ids = t5_tokenizer(
+          "summarize:", 
+          return_tensors="pt",
+          add_special_tokens=True,
+          max_length=32,
+          truncation=True
+     ).input_ids.to(device)
      
      output = t5_model.generate(
-          decoder_input_ids=decoder_input_ids,
-          past_key_values=encoder_cache,
+          inputs_embeds=reshaped_tensor,
           attention_mask=summary_attention_mask,
+          decoder_input_ids=decoder_input_ids,
           max_length=summary_length,
           num_beams=3,
           no_repeat_ngram_size=2,
-          use_cache=True
+          early_stopping=True,
+          use_cache=True,
+          output_scores=True,
+          return_dict_in_generate=True,
+          bos_token_id=t5_tokenizer.pad_token_id,
+          eos_token_id=t5_tokenizer.eos_token_id
      )
 
      decoded_output = t5_tokenizer.decode(
           output[0], 
           skip_special_tokens=True,
           clean_up_tokenization_spaces=True
-          )
+     )
      
      return decoded_output
 
