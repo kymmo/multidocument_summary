@@ -38,7 +38,20 @@ class EvalDataset(Dataset):
 
      def __getitem__(self, idx):
           return self.data[idx], self.node_map[idx], self.summary_list[idx]
-     
+
+class EvalBatchDataset(EvalDataset):
+     def __init__(self, tensor_data, dict_list):
+          self.tensor_data = tensor_data
+          self.dict_list = dict_list
+
+     def __len__(self):
+          return len(self.tensor_data)
+
+     def __getitem__(self, idx):
+          tensor = self.tensor_data[idx]
+          sample_dict = self.dict_list[idx]
+
+          return tensor, sample_dict
 
 class OptimizedDataset(Dataset):
      def __init__(self, file_path):
