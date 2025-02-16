@@ -1,28 +1,10 @@
-import torch
 from torch_geometric.data import HeteroData
 from torch.utils.data import Dataset
 import torch.multiprocessing as mp
 
 from utils.graph_utils import get_embed_graph, get_embed_graph_node_map
 
-class SummaryDataset(Dataset):
-     def __init__(self, file_path):
-          self.file_path = file_path
-          self.data = self._load_data(file_path)
 
-     def _load_data(self, file_path):
-          ## should load a list of embeded hetgraph
-          embedded_graphs = get_embed_graph(file_path)
-          return embedded_graphs
-
-     def __len__(self):
-          return len(self.data)
-
-     def __getitem__(self, idx):
-          ## return HeteroData
-          return self.data[idx]
-     
-     
 class EvalDataset(Dataset):
      def __init__(self, file_path):
           self.file_path = file_path
@@ -38,20 +20,6 @@ class EvalDataset(Dataset):
 
      def __getitem__(self, idx):
           return self.data[idx], self.node_map[idx], self.summary_list[idx]
-
-class EvalBatchDataset(EvalDataset):
-     def __init__(self, tensor_data, dict_list):
-          self.tensor_data = tensor_data
-          self.dict_list = dict_list
-
-     def __len__(self):
-          return len(self.tensor_data)
-
-     def __getitem__(self, idx):
-          tensor = self.tensor_data[idx]
-          sample_dict = self.dict_list[idx]
-
-          return tensor, sample_dict
 
 class OptimizedDataset(Dataset):
      def __init__(self, file_path):
@@ -75,8 +43,10 @@ class OptimizedDataset(Dataset):
                     # conver the embedding to shared memory space
                     for node_type in het_graph.node_types:
                          x = het_graph[node_type].x.clone().share_memory_()
+                         txt = het_graph[node_type].text ### TODO: str list to copy to shared momery
                          shared_graph[node_type].x = x
-                    
+                         shared_graph[node_type].text = txt
+                         
                     for edge_type in het_graph.edge_types:
                          edge_index = het_graph[edge_type].edge_index.clone().share_memory_()
                          edge_attr = het_graph[edge_type].edge_attr.clone().share_memory_()

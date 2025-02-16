@@ -115,6 +115,11 @@ def embed_nodes_gpu(graphs, sentid_node_map_list):
           bert_tokenizer = models["tokenizer"]
           bert_model = models["normal"]
           sentBERT_model = models["sent_bert"]
+          ## eval mode
+          bert_abs_model.eval()
+          bert_relative_model.eval()
+          bert_model.eval()
+          sentBERT_model.eval()
           
           sent_node_embedding_map_list = get_sent_pos_encoding(sentid_node_map_list, bert_abs_model, bert_relative_model)
           for graph, sent_node_embedding_map in zip(graphs, sent_node_embedding_map_list):
@@ -122,7 +127,12 @@ def embed_nodes_gpu(graphs, sentid_node_map_list):
                if sentences:
                     with torch.no_grad():
                          # encode all sentences in a batch
-                         sent_embeddings = sentBERT_model.encode(sentences, convert_to_tensor=True, device=device)  # (num_sentences, 384)
+                         sent_embeddings = sentBERT_model.encode(
+                              sentences, 
+                              convert_to_tensor=True, 
+                              normalize_embeddings=True, 
+                              batch_size=32,
+                              device=device)  # (num_sentences, 384)
 
                sent_idx = 0
                for node, data in graph.nodes(data=True):
@@ -134,7 +144,6 @@ def embed_nodes_gpu(graphs, sentid_node_map_list):
 
                               # Combine embeddings
                               pad_sent_emb = torch.cat([sent_embedding, torch.zeros(384, device=device)], dim=0)  # (768,)
-
                               graph.nodes[node]['embedding'] = position_embeddings + pad_sent_emb
 
                     elif data['type'] == 'word':
@@ -207,20 +216,27 @@ def convert_graph_from_nx_to_pyg(graphs):
           sent_id = 0
           word_id = 0
           word_nodes = []
+          word_texts = []
           sent_nodes = []
+          sent_texts = []
           for node in nx_graph.nodes():
                cur_type = nx_graph.nodes[node]['type']
                embed = nx_graph.nodes[node]['embedding']
+               text = nx_graph.nodes[node]['text']
                if cur_type == 'word':
                     word_nodes.append(embed)
+                    word_texts.append(text) # word
                     node_map[node] = ('word', word_id)
                     word_id = word_id + 1
                elif cur_type == 'sentence':
                     sent_nodes.append(embed)
+                    sent_texts.append(text[2])# (training id, doc id, text)
                     node_map[node] = ('sentence', sent_id)
                     sent_id = sent_id + 1
           het_graph['word'].x = torch.stack(word_nodes)
+          het_graph['word'].text = word_texts
           het_graph['sentence'].x = torch.stack(sent_nodes)
+          het_graph['sentence'].text = sent_texts
           
           similarity_edge_indices = []
           similarity_edge_attrs = []

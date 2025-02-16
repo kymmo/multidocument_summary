@@ -3,7 +3,7 @@ from pathlib import Path
 from models.DatasetLoader import EvalDataset
 
 from models.gnn_train_t5 import train_gnn, get_gnn_trained_embedding
-from models.t5 import get_t5_outputs, get_t5_outputs2
+from models.t5 import get_t5_outputs2
 from utils.model_utils import rouge_eval
 
 def model_train_and_eval_t5(dataset_path):

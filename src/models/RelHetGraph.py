@@ -1,9 +1,10 @@
 import torch.nn as nn
 import torch.nn.functional as F
 from torch_geometric.nn import GATConv, HeteroConv
+from torch_geometric.transforms import NormalizeFeatures
 
 class RelHetGraph(nn.Module):
-     def __init__(self,  hidden_size, out_size, num_heads, sentence_in_size = 768, word_in_size = 768, feat_drop=0.2, attn_drop=0.2):
+     def __init__(self,  hidden_size, out_size, num_heads, sentence_in_size = 768, word_in_size = 768, feat_drop=0.1, attn_drop=0.1):
           super().__init__()
           
           self.lin_sent = nn.Linear(sentence_in_size, sentence_in_size)
@@ -33,11 +34,12 @@ class RelHetGraph(nn.Module):
                'sentence': F.relu(self.lin_sent(sentence_feat)),
                'word': F.relu(self.lin_word(word_feat))
           }
+          
           h = self.conv1(h_initial, g.edge_index_dict)
-          # h = {k: h_val + h_initial[k] for k, h_val in h.items()}  # residential connect
+          # h = {k: h_val + self.res_proj[k](h_initial[k]) for k, h_val in h.items()}  # residential connect
           h = {k: self.feat_drop(h_val) for k, h_val in h.items()}  # dropout
           
           h = {k: h_val.flatten(1) for k, h_val in h.items()}  # flatten the output
           h = self.conv2(h, g.edge_index_dict)
-          
+
           return h['sentence']
