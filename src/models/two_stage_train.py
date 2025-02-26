@@ -286,8 +286,6 @@ def train_gnn_by_cat(file_path, hidden_size, out_size, num_heads,sentence_in_siz
                     outputs = t5_model(inputs_embeds=reshape_embeddings, labels=labels)
                     loss = outputs.loss
                
-               # loss.backward()
-               # optimizer.step()
                scaler.scale(loss).backward()
                scaler.step(optimizer)
                scaler.update()
