@@ -1,6 +1,7 @@
 from torch_geometric.data import HeteroData
 from torch.utils.data import Dataset
 import torch.multiprocessing as mp
+from torch_geometric.data import Batch
 
 from utils.graph_utils import get_embed_graph, get_embed_graph_node_map
 
@@ -61,6 +62,7 @@ class OptimizedDataset(Dataset):
      def __len__(self):
           if not self._loaded.value:
                self._load_all()  # late loader
+               
           return len(self.data)
 
      def __getitem__(self, idx):
@@ -68,3 +70,17 @@ class OptimizedDataset(Dataset):
                self._load_all()
                
           return self.data[idx].cpu()
+     
+def custom_collate_fn(batch):
+     graphs, node_maps, summary_list = zip(*batch)
+     # batched_graph = Batch.from_data_list(graphs)
+     
+     batched_maps = []
+     batch_summary = []
+     batched_graph = []
+     for graph, node_map, summary in zip(graphs, node_maps, summary_list):
+          batched_maps.append(node_map)
+          batch_summary.append(summary) ## string list
+          batched_graph.append(graph)
+     
+     return batched_graph, batched_maps, batch_summary

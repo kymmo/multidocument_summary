@@ -230,13 +230,9 @@ def define_node_edge(documents_list, edge_similarity_threshold = 0.6):
      """
      sentBERT_model = SentenceTransformer('all-MiniLM-L6-v2', device=device)
 
-     print("Start preprocessing...")
-     start_time = time.time()
      docs_sents_obj_list = split_sentences_pipe(documents_list)
      docs_kws_scores_list = extract_keywords(documents_list, sentBERT_model)
      docs_corefs_list = coref_resolve2(documents_list)
-     end_time = time.time()
-     print(f"Finish preprocessing, time cost:  {end_time - start_time:.4f} s.")
      
      edge_data_list = []
      word_node_list = []

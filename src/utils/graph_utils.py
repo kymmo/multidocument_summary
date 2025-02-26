@@ -26,8 +26,10 @@ def get_embed_graph(file_path):
 def get_embed_graph_node_map(file_path):
      docs_list, summary_list = load_jsonl(file_path)
      print(f"Data file is loaded. Creating embedding graph and node mapping...")
+     start = time.time()
      sample_graphs, node_maps = create_embed_graphs(docs_list)
-     print(f"Finish graph creation")
+     end = time.time()
+     print(f"Finish graph creation, time cost:  {end - start:.4f} s.")
      
      clean_memory()
      print(f"CUDA usage after graph embedding: {torch.cuda.memory_allocated()/1024**3:.2f} GB has used, remaining {torch.cuda.max_memory_allocated()/1024**3:.2f} GB available.")
