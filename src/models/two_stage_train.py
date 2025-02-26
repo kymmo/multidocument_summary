@@ -111,8 +111,8 @@ def get_combined_embed(batch_graph_list, gnn_embeddings, sent_text):
                     avg_t5_embeddings = avg_t5_embeddings.to(device)
 
                     ## concatinate GNN and T5 embedding
-                    gnn_emb_norm = nn.LayerNorm(gnn_sent_embs.shape[1])(padding_gnn_embeddings)
-                    t5_emb_norm = nn.LayerNorm(t5_model.config.hidden_size)(avg_t5_embeddings)
+                    gnn_emb_norm = nn.LayerNorm(gnn_sent_embs.shape[1], device=device)(padding_gnn_embeddings)
+                    t5_emb_norm = nn.LayerNorm(t5_model.config.hidden_size, device=device)(avg_t5_embeddings)
                     
                     combined_embeddings = torch.cat([gnn_emb_norm, t5_emb_norm], dim=1)
                     
