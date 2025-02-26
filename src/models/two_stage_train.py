@@ -82,7 +82,7 @@ def get_combined_embed(batch_graph_list, gnn_embeddings, sent_text):
           ## t5 sent sembeddings
           with torch.no_grad():
                graph_sent.insert(0, "Generate a summary from documents' embeddings: ") # task prefix
-               padding = torch.zeros(1, gnn_sent_embs.shape[1]) ## padding for same size to sent
+               padding = torch.zeros(1, gnn_sent_embs.shape[1]).to(device) ## padding for same size to sent
                padding_gnn_embeddings = torch.cat([padding, gnn_sent_embs], dim = 0)
           
                with autocast():
