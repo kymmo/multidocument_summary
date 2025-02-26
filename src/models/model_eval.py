@@ -55,10 +55,6 @@ def eval_t5_summary(eval_data_path, max_summary_length, batch_size = 16):
      
      # get average scores
      scores_list = [obj for batch_score in batch_scores for obj in batch_score]
-     
-     ###############test
-     print(scores_list)
-     #####################
      avg = merge_dicts(scores_list)
      eval_end_time = time.time()
      print(f"Finish evaluation, time cost:  {eval_end_time - eval_start_time:.4f} s.")

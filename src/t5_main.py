@@ -7,24 +7,22 @@ from models.model_eval import get_t5_outputs2, eval_t5_summary
 from models.two_stage_train import train_gnn_t5
 from utils.model_utils import rouge_eval
 
-def model_train_eval(dataset_path):
+def model_train_eval(dataset_path, learning_rate = 0.001,num_epochs = 20, batch_size = 16):
      bert_embed_size = 768
      hidden_size = bert_embed_size
      out_size = 768 # for t5-base input
      num_heads = 8
      
      train_gnn_t5(
-          file_path=dataset_path,
+          dataset_path=dataset_path,
           hidden_size=hidden_size,
           out_size=out_size,
           num_heads=num_heads,
-          sentence_in_size = 768, 
-          word_in_size = 768,
-          learning_rate=0.001,
-          num_epochs=20,
+          learning_rate=learning_rate,
+          num_epochs=num_epochs,
           feat_drop=0.1,
           attn_drop=0.1,
-          batch_size=16
+          batch_size=batch_size
      )
      
      eval_data_path = os.path.join(dataset_path, "validation.jsonl")
