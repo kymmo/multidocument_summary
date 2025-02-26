@@ -140,8 +140,8 @@ def embed_nodes_gpu(graphs, sentid_node_map_list):
                for node, data in graph.nodes(data=True):
                     if data['type'] == 'sentence':
                          with torch.no_grad():
-                              position_embeddings = sent_node_embedding_map[node].to(device)  # (768)
-                              sent_embedding = sent_embeddings[sent_idx].to(device)  # (384,)
+                              position_embeddings = sent_node_embedding_map[node]  # (768)
+                              sent_embedding = sent_embeddings[sent_idx]  # (384,)
                               sent_idx += 1
 
                               # Combine embeddings
@@ -171,7 +171,7 @@ def get_sent_pos_encoding(sentid_node_map_list, bert_abs_model, bert_relative_mo
           doc_size = 1 + next(reversed(sentid_node_map.items()))[0][1] ## the second key is doc_id
           # doc absolute position embedding
           doc_input_ids = [i for i in range(doc_size)]
-          doc_pos_embeddings = bert_abs_model.embeddings.position_embeddings(torch.tensor(doc_input_ids).to(device))
+          doc_pos_embeddings = bert_abs_model.embeddings.position_embeddings(torch.tensor(doc_input_ids))
           sent_pos_embeddings = []
 
           for (training_id, doc_id, sent_id), node_id in reversed(sentid_node_map.items()):

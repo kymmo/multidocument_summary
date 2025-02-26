@@ -48,8 +48,8 @@ class CustomT5(T5ForConditionalGeneration):
      def forward(self, attention_mask=None, inputs_embeds=None, labels=None, combin_embeddings_list=None, label_summaries=None, **kwargs):
           if combin_embeddings_list is not None:
                inputs_comb_embeds, masks = reshape_embedding_to_tensors(combin_embeddings_list) # [batch_size, seq_len, embedding_size]
-               inputs_embeds = self.projector(inputs_comb_embeds).to(device) # [batch, seq_len, d_model]
-               attention_mask = masks.to(device)
+               inputs_embeds = self.projector(inputs_comb_embeds) # [batch, seq_len, d_model]
+               attention_mask = masks
           
           if label_summaries is not None:
                tokenized_summaries = t5_tokenizer(
@@ -59,7 +59,7 @@ class CustomT5(T5ForConditionalGeneration):
                     max_length=512,
                     return_tensors="pt",
                     add_special_tokens=True
-               ).to(device)
+               )
                labels = tokenized_summaries.input_ids
           
           return super().forward(

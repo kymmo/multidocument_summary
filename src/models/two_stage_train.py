@@ -150,7 +150,7 @@ def fine_tune_t5(file_path, out_size, num_epochs = 20, batch_size=16):
           train_dataset,
           batch_size=batch_size,
           shuffle=True,
-          pin_memory=True,
+          # pin_memory=True, ## data has been in GPU while training gnn
           collate_fn=custom_collate_fn
      )
      
