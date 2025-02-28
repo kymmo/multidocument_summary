@@ -10,7 +10,9 @@ auto_tokenizer = AutoTokenizer.from_pretrained(base_model)
 class CustomT5(T5ForConditionalGeneration):
      """ custom t5 with gnn and projector"""
      def __init__(self, custom_config):
+          custom_config.use_cache = False
           super().__init__(custom_config)
+          self.gradient_checkpointing_enable()
           
           if not hasattr(custom_config, 'projector_input_size'):
                raise ValueError("CustomT5 requires 'projector_input_size' in config.")

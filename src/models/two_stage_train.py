@@ -19,8 +19,8 @@ from utils.model_utils import freeze_model, clean_memory
 base_model = "google-t5/t5-base"
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 t5_tokenizer = T5Tokenizer.from_pretrained(base_model)
-t5_model = T5ForConditionalGeneration.from_pretrained(base_model).to(device)
-# model_save_path = os.path.join('.', 'saved_models')
+t5_model = T5ForConditionalGeneration.from_pretrained(base_model, use_cache=False).to(device)
+t5_model.gradient_checkpointing_enable()
 
 def train_gnn_t5(dataset_path, hidden_size, out_size, num_heads=8, learning_rate=0.001, num_epochs=20, feat_drop=0.1, attn_drop=0.1, batch_size=16):
      ## gnn training, t5 freezed
@@ -210,6 +210,10 @@ def fine_tune_t5(file_path, out_size, num_epochs = 20, batch_size=16):
           scheduler.step()
           
      custom_t5_model.save_pretrained("./fine_tuned_t5")
+     
+     del custom_t5_model
+     del gnn_model
+     clean_memory()
 
 
 """ Deprecated"""
