@@ -20,7 +20,7 @@ def eval_t5_summary(eval_data_path, max_summary_length, batch_size = 16):
      gnn_model.eval()
      freeze_model(gnn_model)
      
-     fine_tuned_t5 = CustomT5.from_pretrained("./fine_tuned_t5")
+     fine_tuned_t5 = CustomT5.from_pretrained("./fine_tuned_t5").to(device)
      fine_tuned_t5.eval()
      freeze_model(fine_tuned_t5)
      
@@ -65,7 +65,7 @@ def eval_t5_summary(eval_data_path, max_summary_length, batch_size = 16):
 def generate_t5_summary(fine_tuned_t5, combin_embeddings_list, max_summary_length=512):
      with torch.no_grad():
           inputs_comb_embeds, masks = reshape_embedding_to_tensors(combin_embeddings_list)
-          inputs_embeds = fine_tuned_t5.projector(inputs_comb_embeds).to(device)
+          inputs_embeds = fine_tuned_t5.projector(inputs_comb_embeds)
           
           generation_config = {
                "max_length": max_summary_length,
@@ -83,8 +83,8 @@ def generate_t5_summary(fine_tuned_t5, combin_embeddings_list, max_summary_lengt
           }
           
           outputs = fine_tuned_t5.generate(
-               inputs_embeds=inputs_embeds,
-               attention_mask=masks,
+               inputs_embeds=inputs_embeds.to(device),
+               attention_mask=masks.to(device),
                **generation_config
           )
 

@@ -28,7 +28,6 @@ class CustomT5(T5ForConditionalGeneration):
           )
           
           self._freeze_parameters()
-          self.to(device)
      
      def _freeze_parameters(self):
           for param in self.parameters():
@@ -50,8 +49,8 @@ class CustomT5(T5ForConditionalGeneration):
      def forward(self, attention_mask=None, inputs_embeds=None, labels=None, combin_embeddings_list=None, label_summaries=None, **kwargs):
           if combin_embeddings_list is not None:
                inputs_comb_embeds, masks = reshape_embedding_to_tensors(combin_embeddings_list) # [batch_size, seq_len, embedding_size]
-               inputs_embeds = self.projector(inputs_comb_embeds) # [batch, seq_len, d_model]
-               attention_mask = masks
+               inputs_embeds = self.projector(inputs_comb_embeds).to(device) # [batch, seq_len, d_model]
+               attention_mask = masks.to(device)
           
           if label_summaries is not None:
                tokenized_summaries = t5_tokenizer(
@@ -62,7 +61,7 @@ class CustomT5(T5ForConditionalGeneration):
                     return_tensors="pt",
                     add_special_tokens=True
                )
-               labels = tokenized_summaries.input_ids
+               labels = tokenized_summaries.input_ids.to(device)
           
           return super().forward(
                inputs_embeds=inputs_embeds,

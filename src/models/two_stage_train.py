@@ -161,7 +161,7 @@ def fine_tune_t5(file_path, out_size, num_epochs = 20, batch_size=16):
      
      config = T5Config.from_pretrained(base_model)
      config.projector_input_size = out_size + t5_model.config.hidden_size
-     custom_t5_model = CustomT5(config)
+     custom_t5_model = CustomT5(config).to(device)
      optimizer = torch.optim.AdamW(
           [
           {"params": custom_t5_model.encoder.block[-2:].parameters(), "lr": 1e-4},
