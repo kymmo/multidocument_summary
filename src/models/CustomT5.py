@@ -28,6 +28,7 @@ class CustomT5(T5ForConditionalGeneration):
           )
           
           self._freeze_parameters()
+          self.encoder.gradient_checkpointing_enable()
      
      def _freeze_parameters(self):
           for param in self.parameters():

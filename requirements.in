@@ -9,3 +9,4 @@ matplotlib
 sentencepiece
 datasets
 protobuf
+GPUtil

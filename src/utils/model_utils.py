@@ -5,9 +5,9 @@ from collections import defaultdict
 from rouge_score.scoring import Score
 
 def clean_memory():
-     gc.collect()
-     torch.cuda.empty_cache()
-     # torch.cuda.set_per_process_memory_fraction(0.8)
+     if torch.cuda.is_available():
+          gc.collect()
+          torch.cuda.empty_cache()
      
 def freeze_model(model):
      for param in model.parameters():

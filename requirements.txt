@@ -75,6 +75,8 @@ fsspec[http]==2024.12.0
     #   huggingface-hub
     #   torch
     #   torch-geometric
+gputil==1.4.0
+    # via -r requirements.in
 huggingface-hub==0.27.1
     # via
     #   datasets

@@ -4,17 +4,17 @@ from pathlib import Path
 import torch.nn as nn
 import time
 import torch.nn.functional as F
+from GPUtil import showUtilization
 from torch_geometric.data import Batch
 from torch.cuda.amp import autocast
-from torch_geometric.loader import DataLoader as geo_DataLoader
 from torch.utils.data import DataLoader as data_DataLoader
 from transformers import T5Tokenizer, T5ForConditionalGeneration, T5Config
 
-from models.RelHetGraph import RelHetGraph
 from models.DatasetLoader import EvalDataset, OptimizedDataset, custom_collate_fn
 from models.CustomT5 import CustomT5
 from models.gnn_train_t5 import train_gnn
 from utils.model_utils import freeze_model, clean_memory
+from models.LongTextEncoder import LongTextEncoder
 
 base_model = "google-t5/t5-base"
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -66,6 +66,49 @@ def train_gnn_t5(dataset_path, hidden_size, out_size, num_heads=8, learning_rate
      
      print("Two-stage training finish!")
 
+def get_combined_embed2(batch_graph_list, gnn_embeddings, sent_text):
+     """改进版特征融合函数（显存优化+长文本支持）"""
+     concat_embedding_list = []
+     start_ind = 0
+     encoder = LongTextEncoder(t5_tokenizer, t5_model)
+     
+     for i_th, graph in enumerate(batch_graph_list): # for each embs of graph
+          graph_sent_num = graph['sentence'].x.shape[0]
+          gnn_sent_embs = gnn_embeddings[start_ind: start_ind + graph_sent_num]
+          start_ind += graph_sent_num
+          graph_sent = sent_text[i_th]
+          
+          # doc level emb
+          prompt = "Generate a summary from documents' embeddings: "
+          full_doc = prompt + " ".join(graph_sent)
+          doc_emb = encoder.encode(full_doc)
+          
+          # sent level emb
+          t5_embs = []
+          for sent in graph_sent:
+               # previous 3 sents as context, adapt most 500 chars.
+               context = " ".join(graph_sent[:3])[:500]
+               processed_sent = f"[Context: {context}] {sent}"
+               sent_emb = encoder.encode(processed_sent)
+               t5_embs.append(sent_emb)
+          t5_embs = torch.cat(t5_embs)
+          
+          with torch.no_grad():
+               gnn_norm = nn.LayerNorm(gnn_sent_embs.shape[-1], device=device)(gnn_sent_embs)
+               t5_norm = nn.LayerNorm(t5_model.config.hidden_size, device=device)(t5_embs)
+               
+               # fuse the whole doc infor
+               fused_gnn = gnn_norm + 0.1 * doc_emb
+               fused_t5 = t5_norm + 0.1 * doc_emb
+               
+               combined = torch.cat([fused_gnn, fused_t5], dim=-1)
+               concat_embedding_list.append(combined)
+          
+          del gnn_norm, t5_norm, fused_gnn, fused_t5
+          clean_memory()
+     
+     return concat_embedding_list
+     
 def get_combined_embed(batch_graph_list, gnn_embeddings, sent_text):
      """ concat gnn_embedding and text t5 embeddings
           output batch graph's sentences embedding list
@@ -86,7 +129,7 @@ def get_combined_embed(batch_graph_list, gnn_embeddings, sent_text):
                padding_gnn_embeddings = torch.cat([padding, gnn_sent_embs], dim = 0)
           
                with autocast():
-                    ## get T5 embeddings # TODO: deal with long text
+                    ## get T5 embeddings
                     inputs = t5_tokenizer(
                          graph_sent, 
                          return_tensors="pt", 
@@ -109,6 +152,8 @@ def get_combined_embed(batch_graph_list, gnn_embeddings, sent_text):
                     masked_embeddings = t5_embeddings * attention_mask.unsqueeze(-1)
                     avg_t5_embeddings = masked_embeddings.sum(dim=1) / attention_mask.sum(dim=1, keepdim=True) ## (sentence_number, embedding)
                     avg_t5_embeddings = avg_t5_embeddings.to(device)
+                    
+                    del input_ids, attention_mask
 
                     ## concatinate GNN and T5 embedding
                     gnn_emb_norm = nn.LayerNorm(gnn_sent_embs.shape[1], device=device)(padding_gnn_embeddings)
@@ -117,6 +162,8 @@ def get_combined_embed(batch_graph_list, gnn_embeddings, sent_text):
                     combined_embeddings = torch.cat([gnn_emb_norm, t5_emb_norm], dim=1)
                     
                     concat_embedding_list.append(combined_embeddings)
+                    
+                    del combined_embeddings
      
      return concat_embedding_list
 
@@ -143,7 +190,7 @@ def chunked_cosine_similarity(embeddings, embedding_matrix, chunk_size=16):
           
      return torch.cat(similarities, dim=0)
 
-def fine_tune_t5(file_path, out_size, num_epochs = 20, batch_size=16):
+def fine_tune_t5(file_path, out_size, num_epochs = 20, batch_size = 4, accumulate_step = 4):
      ## data load
      train_dataset = EvalDataset(file_path)
      train_dataloader = data_DataLoader(
@@ -160,8 +207,9 @@ def fine_tune_t5(file_path, out_size, num_epochs = 20, batch_size=16):
      freeze_model(gnn_model)
      
      config = T5Config.from_pretrained(base_model)
-     config.projector_input_size = out_size + t5_model.config.hidden_size
+     config.projector_input_size = out_size + t5_model.config.hidden_size # concated emb size
      custom_t5_model = CustomT5(config).to(device)
+     custom_t5_model.train()
      optimizer = torch.optim.AdamW(
           [
           {"params": custom_t5_model.encoder.block[-2:].parameters(), "lr": 1e-4},
@@ -172,18 +220,17 @@ def fine_tune_t5(file_path, out_size, num_epochs = 20, batch_size=16):
      )
      scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=num_epochs)
 
-     print(f"CUDA usage after model loading: {torch.cuda.memory_allocated()/1024**3:.2f} GB has used, remaining {torch.cuda.max_memory_allocated()/1024**3:.2f} GB available.")
+     # print(f"CUDA usage after model loading: {torch.cuda.memory_allocated()/1024**3:.2f} GB has used, remaining {torch.cuda.max_memory_allocated()/1024**3:.2f} GB available.")
      
      torch.cuda.empty_cache()
-     scaler = torch.cuda.amp.GradScaler()
+     scaler = torch.cuda.amp.GradScaler(init_scale=1024.0)
      print(f"Setting finish. Start training epoch...")
      for epoch in range(num_epochs):
-          custom_t5_model.train()
-          total_loss = 0
+          total_loss = 0.0
+          actual_batch_count = 0
           
-          for batch in train_dataloader:
+          for batch_idx, batch in enumerate(train_dataloader):
                batch_graph, batch_map, batch_summary = batch
-               optimizer.zero_grad()
                
                with torch.cuda.amp.autocast():
                     batched_graph = Batch.from_data_list(batch_graph).to(device, non_blocking=True)
@@ -196,113 +243,28 @@ def fine_tune_t5(file_path, out_size, num_epochs = 20, batch_size=16):
 
                     # forward
                     gnn_embeddings = gnn_model(batched_graph, corrupted_sentence_feat, word_feat)
-                    concat_embs_list = get_combined_embed(batch_graph, gnn_embeddings, sent_text)
+                    concat_embs_list = get_combined_embed2(batch_graph, gnn_embeddings, sent_text)
                     
                     outputs = custom_t5_model(combin_embeddings_list = concat_embs_list, label_summaries=batch_summary)
                     loss = outputs.loss
-               
+                    loss = loss / accumulate_step
+                    
                scaler.scale(loss).backward()
-               scaler.step(optimizer)
-               scaler.update()
-               total_loss += loss.item()
+               total_loss += loss.item() * accumulate_step
+               ## gradient accumulate
+               if ((batch_idx + 1) % accumulate_step == 0) or (batch_idx + 1 == len(train_dataloader)):
+                    actual_batch_count += 1
+                    scaler.step(optimizer)
+                    scaler.update()
+                    optimizer.zero_grad()
           
-          print(f"Epoch {epoch+1} / {num_epochs}, Loss: {total_loss/len(train_dataloader):.4f}, Learning Rate: {scheduler.get_last_lr()[0]:.6f}")
+          showUtilization()
+          avg_loss = total_loss / (actual_batch_count * accumulate_step) if actual_batch_count > 0 else 0
+          print(f"Epoch {epoch+1} / {num_epochs}, Loss: {avg_loss:.4f}, Learning Rate: {scheduler.get_last_lr()[0]:.6f}")
           scheduler.step()
           
      custom_t5_model.save_pretrained("./fine_tuned_t5")
      
      del custom_t5_model
      del gnn_model
-     clean_memory()
-
-
-""" Deprecated"""
-def train_gnn_by_cat(file_path, hidden_size, out_size, num_heads,sentence_in_size = 768, word_in_size = 768, learning_rate=0.001, num_epochs=20, feat_drop=0.2, attn_drop=0.2, batch_size=16):
-     """Trains the HetGNN model using a proxy task."""
-     clean_memory()
-     print(f"Task runing on {device}")
-
-     print(f"Start loading sample graphs...")
-     train_dataset = OptimizedDataset(file_path)
-     train_dataloader = geo_DataLoader(
-          train_dataset,
-          batch_size=batch_size,
-          shuffle=True,
-          pin_memory=True,
-          follow_batch=['sentence', 'word']
-     )
-     print(f"Dataset load successfully!")
-     
-     gnn_model = RelHetGraph(hidden_size, out_size, num_heads, sentence_in_size, word_in_size , feat_drop, attn_drop).to(device)
-     concat_dim = out_size + t5_model.config.hidden_size ## embedding concatination
-     T5_embed_layer_projector = nn.Sequential(
-          nn.Linear(concat_dim, t5_model.config.d_model)
-          # nn.LayerNorm(t5_model.config.d_model)
-     ).to(device)
-     optimizer = torch.optim.Adam(list(gnn_model.parameters()) + list(T5_embed_layer_projector.parameters()), lr=learning_rate)
-     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=num_epochs)
-
-     print(f"CUDA usage after model loading: {torch.cuda.memory_allocated()/1024**3:.2f} GB has used, remaining {torch.cuda.max_memory_allocated()/1024**3:.2f} GB available.")
-     
-     torch.cuda.empty_cache()
-     freeze_model(t5_model)
-     scaler = torch.cuda.amp.GradScaler()
-     print(f"Setting finish. Start training epoch...")
-     for epoch in range(num_epochs):
-          gnn_model.train() ## set to train mode
-          total_loss = 0
-          
-          for batch in train_dataloader:
-               batch = batch.to(device, non_blocking=True)
-               optimizer.zero_grad()
-               
-               with torch.cuda.amp.autocast():
-                    sentence_feat = batch['sentence'].x
-                    word_feat = batch['word'].x
-                    sent_text = batch['sentence'].text
-                    
-                    ## adding data noise
-                    corrupted_sentence_feat = F.dropout(sentence_feat, p=0.1, training=gnn_model.training)
-
-                    # forward
-                    gnn_embeddings = gnn_model(batch, corrupted_sentence_feat, word_feat)
-                    concat_embs = get_combined_embed(batch, gnn_embeddings, sent_text)
-                    concat_emb_tensors = torch.cat(concat_embs, dim = 0)
-                    
-                    # T5 NLL loss
-                    projected_embeddings = T5_embed_layer_projector(concat_emb_tensors)
-                    reshape_embeddings = projected_embeddings.unsqueeze(1)  # fit the T5 input need (batch_size, sequence_length, hidden_size)
-                    
-                    ## labels calculate ##TODO improved
-                    with torch.no_grad():
-                         t5_embedding_matrix = t5_model.get_input_embeddings().weight  # (vocab_size, hidden_dim)
-                         similarities = chunked_cosine_similarity(projected_embeddings, t5_embedding_matrix, chunk_size=8)
-                         # top_k_values, top_k_indices = similarities.topk(k=3, dim=1)
-                         # average_similarity = top_k_values.mean(dim=1)  # (batch_size,)
-                         # abs_diff = torch.abs(similarities - average_similarity.unsqueeze(1))  # (batch_size, vocab_size)
-                         # closest_token_ids = abs_diff.argmin(dim=1)  # (batch_size,) top k average similarity
-                         closest_token_ids = similarities.argmax(dim=1) ## most similar
-                         seq_length = reshape_embeddings.size(1)
-                         labels = closest_token_ids.unsqueeze(1).expand(-1, seq_length) # (batch_size, seq_length)
-                         labels = labels.long().to(device)  # make sure long type and GPU calculation
-
-                    
-                    outputs = t5_model(inputs_embeds=reshape_embeddings, labels=labels)
-                    loss = outputs.loss
-               
-               scaler.scale(loss).backward()
-               scaler.step(optimizer)
-               scaler.update()
-               total_loss += loss.item()
-          
-          print(f"Epoch {epoch+1} / {num_epochs}, Loss: {total_loss/len(train_dataloader):.4f}, Learning Rate: {scheduler.get_last_lr()[0]:.6f}")
-          scheduler.step()
-
-     torch.save(gnn_model.state_dict(), 'gnn_trained_weights.pth')
-     torch.save(T5_embed_layer_projector.state_dict(), 't5_projector_weights.pth')
-     
-     print("GNN Training Finish.")
-     
-     del gnn_model
-     del T5_embed_layer_projector
      clean_memory()
