@@ -72,30 +72,41 @@ def get_combined_embed2(batch_graph_list, gnn_embeddings, sent_text):
      start_ind = 0
      encoder = LongTextEncoder(t5_tokenizer, t5_model)
      
+     ## cal doc_emb first
+     process_doc = []
+     for graph_sents in sent_text:
+          prompt = "Generate a summary from documents' embeddings: "
+          full_doc = prompt + " ".join(graph_sents)
+          process_doc.append(full_doc)
+          
+     with torch.no_grad(), torch.cuda.amp.autocast():
+          docs_embs = encoder.encode_batch(process_doc, batch_size=16)
+     
+     ## cal sent level t5 emb
+     graph_sent_embs = []
+     for graph_sents in sent_text:
+          process_sents = []
+          for sent_id, sent in enumerate(graph_sents):
+               # previous 3 sents as context, adapt most 500 chars.
+               cont_start = max(sent_id - 3, 0)
+               context = " ".join(graph_sents[cont_start:sent_id])[:500]
+               cont_sent = f"[Context: {context}] {sent}"
+               process_sents.append(cont_sent)
+               
+          with torch.no_grad(), torch.cuda.amp.autocast():
+               sent_embs = encoder.encode_batch(process_sents, batch_size=16)
+          
+          graph_sent_embs.append(sent_embs)
+
      for i_th, graph in enumerate(batch_graph_list): # for each embs of graph
           graph_sent_num = graph['sentence'].x.shape[0]
           gnn_sent_embs = gnn_embeddings[start_ind: start_ind + graph_sent_num]
           start_ind += graph_sent_num
-          graph_sent = sent_text[i_th]
-          
-          # doc level emb
-          prompt = "Generate a summary from documents' embeddings: "
-          full_doc = prompt + " ".join(graph_sent)
-          doc_emb = encoder.encode(full_doc)
-          
-          # sent level emb
-          t5_embs = []
-          for sent in graph_sent:
-               # previous 3 sents as context, adapt most 500 chars.
-               context = " ".join(graph_sent[:3])[:500]
-               processed_sent = f"[Context: {context}] {sent}"
-               sent_emb = encoder.encode(processed_sent)
-               t5_embs.append(sent_emb)
-          t5_embs = torch.cat(t5_embs)
           
           with torch.no_grad():
-               gnn_norm = nn.LayerNorm(gnn_sent_embs.shape[-1], device=device)(gnn_sent_embs)
-               t5_norm = nn.LayerNorm(t5_model.config.hidden_size, device=device)(t5_embs)
+               gnn_norm = F.normalize(gnn_sent_embs, p=2, dim=-1)
+               t5_norm = F.normalize(graph_sent_embs[i_th], p=2, dim=-1)
+               doc_emb = docs_embs[i_th].unsqueeze(0)
                
                # fuse the whole doc infor
                fused_gnn = gnn_norm + 0.1 * doc_emb
@@ -223,7 +234,7 @@ def fine_tune_t5(file_path, out_size, num_epochs = 20, batch_size = 4, accumulat
      # print(f"CUDA usage after model loading: {torch.cuda.memory_allocated()/1024**3:.2f} GB has used, remaining {torch.cuda.max_memory_allocated()/1024**3:.2f} GB available.")
      
      torch.cuda.empty_cache()
-     scaler = torch.cuda.amp.GradScaler(init_scale=1024.0)
+     scaler = torch.cuda.amp.GradScaler(enabled=True)
      print(f"Setting finish. Start training epoch...")
      for epoch in range(num_epochs):
           total_loss = 0.0
