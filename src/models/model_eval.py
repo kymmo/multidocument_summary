@@ -29,7 +29,6 @@ def eval_t5_summary(eval_data_path, max_summary_length, batch_size = 16):
           eval_dataset,
           batch_size=batch_size,
           shuffle=False,
-          pin_memory=True,
           collate_fn=custom_collate_fn
      )
      
