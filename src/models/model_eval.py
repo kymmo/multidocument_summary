@@ -11,7 +11,7 @@ from utils.model_utils import clean_memory, freeze_model
 from models.CustomT5 import CustomT5, reshape_embedding_to_tensors
 from models.RelHetGraph import RelHetGraph
 from models.DatasetLoader import EvalDataset, custom_collate_fn
-from models.two_stage_train import get_combined_embed
+from models.two_stage_train import get_combined_embed2
 from utils.model_utils import rouge_eval, merge_dicts
 
 def eval_t5_summary(eval_data_path, max_summary_length, batch_size = 16):
@@ -47,7 +47,7 @@ def eval_t5_summary(eval_data_path, max_summary_length, batch_size = 16):
                     
                     corrupted_sentence_feat = F.dropout(sentence_feat, p=0.1, training=gnn_model.training)
                     gnn_embeddings = gnn_model(batched_graph, corrupted_sentence_feat, word_feat)
-                    concat_embs = get_combined_embed(batch_graph, gnn_embeddings, sent_text)
+                    concat_embs = get_combined_embed2(batch_graph, gnn_embeddings, sent_text)
                     summaries = generate_t5_summary(fine_tuned_t5, concat_embs, max_summary_length)
                     
                     batch_scores.append(rouge_eval(batch_summary, summaries))
