@@ -2,7 +2,6 @@ import torch
 import torch.nn as nn
 from torch_geometric.data import Batch
 import torch.nn.functional as F
-from GPUtil import showUtilization
 from torch_geometric.loader import DataLoader as geo_DataLoader
 from torch.utils.data import DataLoader as data_DataLoader
 from transformers import T5Tokenizer, T5ForConditionalGeneration
@@ -46,7 +45,7 @@ def train_gnn(file_path, hidden_size, out_size, num_heads,sentence_in_size = 768
      optimizer = torch.optim.Adam(list(gnn_model.parameters()) + list(T5_embed_layer_projector.parameters()), lr=learning_rate)
      scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=num_epochs)
 
-     # print(f"CUDA usage after model loading: {torch.cuda.memory_allocated()/1024**3:.2f} GB has used, remaining {torch.cuda.max_memory_allocated()/1024**3:.2f} GB available.")
+     print(f"CUDA usage after model loading: {torch.cuda.memory_allocated()/1024**3:.2f} GB has used, remaining {torch.cuda.max_memory_allocated()/1024**3:.2f} GB available.")
      
      freeze_model(t5_model)
      t5_model.eval() ## no update for T5
@@ -94,7 +93,6 @@ def train_gnn(file_path, hidden_size, out_size, num_heads,sentence_in_size = 768
                scaler.update()
                total_loss += loss.item()
           
-          showUtilization()
           print(f"Epoch {epoch+1} / {num_epochs}, Loss: {total_loss/len(train_dataloader):.4f}, Learning Rate: {scheduler.get_last_lr()[0]:.6f}")
           scheduler.step()
      

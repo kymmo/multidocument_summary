@@ -4,7 +4,6 @@ from pathlib import Path
 import torch.nn as nn
 import time
 import torch.nn.functional as F
-from GPUtil import showUtilization
 from torch_geometric.data import Batch
 from torch.cuda.amp import autocast
 from torch.utils.data import DataLoader as data_DataLoader
@@ -105,8 +104,8 @@ def get_combined_embed2(batch_graph_list, gnn_embeddings, sent_text):
           
           with torch.no_grad():
                gnn_norm = F.normalize(gnn_sent_embs, p=2, dim=-1)
-               t5_norm = F.normalize(graph_sent_embs[i_th], p=2, dim=-1)
-               doc_emb = docs_embs[i_th].unsqueeze(0)
+               t5_norm = F.normalize(graph_sent_embs[i_th].to(device), p=2, dim=-1)
+               doc_emb = docs_embs[i_th].unsqueeze(0).to(device)
                
                # fuse the whole doc infor
                fused_gnn = gnn_norm + 0.1 * doc_emb
@@ -115,7 +114,7 @@ def get_combined_embed2(batch_graph_list, gnn_embeddings, sent_text):
                combined = torch.cat([fused_gnn, fused_t5], dim=-1)
                concat_embedding_list.append(combined)
           
-          del gnn_norm, t5_norm, fused_gnn, fused_t5
+          del gnn_norm, t5_norm, fused_gnn, doc_emb, fused_t5
           clean_memory()
      
      return concat_embedding_list
@@ -231,7 +230,7 @@ def fine_tune_t5(file_path, out_size, num_epochs = 20, batch_size = 4, accumulat
      )
      scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=num_epochs)
 
-     # print(f"CUDA usage after model loading: {torch.cuda.memory_allocated()/1024**3:.2f} GB has used, remaining {torch.cuda.max_memory_allocated()/1024**3:.2f} GB available.")
+     print(f"CUDA usage after model loading: {torch.cuda.memory_allocated()/1024**3:.2f} GB has used, remaining {torch.cuda.max_memory_allocated()/1024**3:.2f} GB available.")
      
      torch.cuda.empty_cache()
      scaler = torch.cuda.amp.GradScaler(enabled=True)
@@ -269,7 +268,6 @@ def fine_tune_t5(file_path, out_size, num_epochs = 20, batch_size = 4, accumulat
                     scaler.update()
                     optimizer.zero_grad()
           
-          showUtilization()
           avg_loss = total_loss / (actual_batch_count * accumulate_step) if actual_batch_count > 0 else 0
           print(f"Epoch {epoch+1} / {num_epochs}, Loss: {avg_loss:.4f}, Learning Rate: {scheduler.get_last_lr()[0]:.6f}")
           scheduler.step()
