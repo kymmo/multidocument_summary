@@ -303,22 +303,31 @@ def define_node_edge(documents_list, edge_similarity_threshold = 0.6):
           ## 3. similarity
           for doc_idx, sent_objs in enumerate(docs_sent_objs):
                sents = [sent.text for sent in sent_objs]
-               with torch.no_grad():  # disable gradient tracking
-                    sent_embeddings = sentBERT_model.encode(sents, convert_to_tensor=True)
-               
-               similarities_matrix = torch.mm(
-                    sent_embeddings, sent_embeddings.t()
-               )
+               # chunk embedding
+               chunk_size = 100
+               sent_embeddings = []
+               sent_size = len(sents)
+               with torch.no_grad():
+                    for i in range(0, sent_size, chunk_size):
+                         chunk = sents[i:i+chunk_size]
+                    
+                         embeddings = sentBERT_model.encode(chunk, convert_to_tensor=True)
+                         sent_embeddings.append(embeddings)
+                    sent_embeddings = torch.cat(sent_embeddings)
                
                n = len(sent_embeddings)
+               normalized = sent_embeddings / sent_embeddings.norm(dim=1, keepdim=True).to(device)
+               
                for i in range(n):
-                    for j in range(i + 1, n):
-                         if similarities_matrix[i][j] >= edge_similarity_threshold:
+                    for j in range(i+1, n):
+                         similarity = (normalized[i] * normalized[j]).sum()
+                         if similarity >= edge_similarity_threshold:
                               node_i = sentId_nodeId_map[(training_idx, doc_idx, i)]
                               node_j = sentId_nodeId_map[(training_idx, doc_idx, j)]
                               
-                              add_edge(node_i, node_j, "similarity", weight=similarities_matrix[i][j])
-          
+                              add_edge(node_i, node_j, "similarity", weight=similarity)
+
+               del sent_embeddings, normalized
           
           edge_data_list.append(edge_data)
           word_node_list.append(word_nodeId_map)
