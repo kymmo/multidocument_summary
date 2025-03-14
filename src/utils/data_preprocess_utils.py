@@ -11,6 +11,8 @@ from functools import wraps
 import traceback
 import os
 
+from utils.model_utils import clean_memory
+
 # Load models - this should be done only once
 nlp_coref = spacy.load("en_core_web_lg")
 nlp_coref.add_pipe('coreferee')
@@ -335,5 +337,6 @@ def define_node_edge(documents_list, edge_similarity_threshold = 0.6):
           sentId_nodeId_list.append(sentId_nodeId_map)
      
      del sentBERT_model
+     clean_memory()
      
      return word_node_list, sent_node_list, edge_data_list, sentId_nodeId_list

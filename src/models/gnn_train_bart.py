@@ -8,7 +8,7 @@ from transformers import BartTokenizer, BartForConditionalGeneration
 
 from models.RelHetGraph import RelHetGraph
 from models.DatasetLoader import OptimizedDataset, EvalDataset
-from utils.model_utils import freeze_model,clean_memory
+from utils.model_utils import freeze_model,clean_memory, print_gpu_memory
 
 large_model = "facebook/bart-large"
 small_model = "facebook/bart-base"
@@ -31,8 +31,8 @@ def train_gnn_bart_loss(file_path, hidden_size, out_size, num_heads,sentence_in_
      BART_embed_layer_projector = nn.Linear(out_size, bart_model.config.d_model).to(device) ## size needed: (batch_size, sequence_length, hidden_size)
      optimizer = torch.optim.Adam(list(gnn_model.parameters()) + list(BART_embed_layer_projector.parameters()), lr=learning_rate)
      
-     print(f"CUDA usage after model loading: {torch.cuda.memory_allocated()/1024**3:.2f} GB has used, remaining {torch.cuda.max_memory_allocated()/1024**3:.2f} GB available.")
-
+     print_gpu_memory("after model loading")
+     
      freeze_model(bart_model)
      bart_model.eval() ## no update for model
      gnn_model.train() ## set to train mode

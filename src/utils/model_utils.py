@@ -54,3 +54,8 @@ def merge_dicts(list_of_dicts):
           merged[key] = merged_score
      
      return merged
+
+def print_gpu_memory(label):
+     allocated = torch.cuda.memory_allocated() / 1024**3
+     reserved = torch.cuda.memory_reserved() / 1024**3
+     print(f"[{label}] GPU allocated: {allocated:.2f} GB | preserved: {reserved:.2f} GB")

@@ -8,7 +8,7 @@ from transformers import T5Tokenizer, T5ForConditionalGeneration
 
 from models.RelHetGraph import RelHetGraph
 from models.DatasetLoader import EvalDataset, OptimizedDataset, custom_collate_fn
-from utils.model_utils import freeze_model, clean_memory
+from utils.model_utils import freeze_model, clean_memory, print_gpu_memory
 
 base_model = "google-t5/t5-base"
 small_model = "google-t5/t5-small" #for test
@@ -45,7 +45,7 @@ def train_gnn(file_path, hidden_size, out_size, num_heads,sentence_in_size = 768
      optimizer = torch.optim.Adam(list(gnn_model.parameters()) + list(T5_embed_layer_projector.parameters()), lr=learning_rate)
      scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=num_epochs)
 
-     print(f"CUDA usage after model loading: {torch.cuda.memory_allocated()/1024**3:.2f} GB has used, remaining {torch.cuda.max_memory_allocated()/1024**3:.2f} GB available.")
+     print_gpu_memory("after gnn model loading")
      
      freeze_model(t5_model)
      t5_model.eval() ## no update for T5

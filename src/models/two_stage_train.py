@@ -12,7 +12,7 @@ from transformers import T5Tokenizer, T5ForConditionalGeneration, T5Config
 from models.DatasetLoader import EvalDataset, OptimizedDataset, custom_collate_fn
 from models.CustomT5 import CustomT5
 from models.gnn_train_t5 import train_gnn
-from utils.model_utils import freeze_model, clean_memory
+from utils.model_utils import freeze_model, clean_memory, print_gpu_memory
 from models.LongTextEncoder import LongTextEncoder
 
 base_model = "google-t5/t5-base"
@@ -230,7 +230,7 @@ def fine_tune_t5(file_path, out_size, num_epochs = 20, batch_size = 4, accumulat
      )
      scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=num_epochs)
 
-     print(f"CUDA usage after model loading: {torch.cuda.memory_allocated()/1024**3:.2f} GB has used, remaining {torch.cuda.max_memory_allocated()/1024**3:.2f} GB available.")
+     print_gpu_memory("after t5 model loading")
      
      torch.cuda.empty_cache()
      scaler = torch.cuda.amp.GradScaler(enabled=True)

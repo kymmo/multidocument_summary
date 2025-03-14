@@ -7,7 +7,7 @@ from torch_geometric.data import HeteroData
 from contextlib import contextmanager
 
 from utils.data_preprocess_utils import define_node_edge, load_jsonl
-from utils.model_utils import clean_memory
+from utils.model_utils import clean_memory, print_gpu_memory
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -20,7 +20,7 @@ def get_embed_graph(file_path):
      print(f"Finish graph creation, time cost:  {end - start:.4f} s.")
      
      clean_memory()
-     print(f"CUDA usage after graph embedding: {torch.cuda.memory_allocated()/1024**3:.2f} GB has used, remaining {torch.cuda.max_memory_allocated()/1024**3:.2f} GB available.")
+     print_gpu_memory("after graph embedding")
      return sample_graphs
 
 def get_embed_graph_node_map(file_path):
@@ -32,7 +32,7 @@ def get_embed_graph_node_map(file_path):
      print(f"Finish graph creation, time cost:  {end - start:.4f} s.")
      
      clean_memory()
-     print(f"CUDA usage after graph embedding: {torch.cuda.memory_allocated()/1024**3:.2f} GB has used, remaining {torch.cuda.max_memory_allocated()/1024**3:.2f} GB available.")
+     print_gpu_memory("after graph embedding")
      return sample_graphs, node_maps, summary_list
 
 def create_embed_graphs(docs_list, sent_similarity = 0.6):
