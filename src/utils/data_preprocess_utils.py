@@ -46,7 +46,7 @@ def split_sentences_pipe(documents_list):
           input_texts = [doc[0].strip() for doc in docs]
           docs_sents_list = [
                [sent for sent in doc.sents]
-               for doc in nlp_coref.pipe(input_texts, batch_size=20)
+               for doc in nlp_coref.pipe(input_texts, batch_size=5)
           ]
           processed_documents_list.append(docs_sents_list)
      
@@ -125,6 +125,7 @@ def extract_keywords(documents_list,sentBERT_model, words_per_100=1, min_keyword
           keywords_list.append(keywords)
      
      del kw_model
+     clean_memory()
      
      return keywords_list
 
@@ -345,3 +346,7 @@ def define_node_edge(documents_list, edge_similarity_threshold = 0.6):
      print_gpu_memory("after preprocess")
      
      return word_node_list, sent_node_list, edge_data_list, sentId_nodeId_list
+
+def chunker(seq, chunk_size):
+     for i in range(0, len(seq), chunk_size):
+          yield seq[i:i+chunk_size]
