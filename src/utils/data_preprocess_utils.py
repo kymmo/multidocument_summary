@@ -5,6 +5,7 @@ import coreferee
 import torch
 import time
 from collections import defaultdict
+from itertools import zip_longest
 from sentence_transformers import SentenceTransformer
 from concurrent.futures import ProcessPoolExecutor
 from functools import wraps
@@ -35,6 +36,22 @@ def load_jsonl(file_path):
                     print(f"Skipping invalid JSON line: {line}")
      
      return documents_list, summary_list
+
+def generator_split_sentences(documents_list):
+     
+     for docs in documents_list:
+          input_texts = [doc[0].strip() for doc in docs]
+          
+          # flowing process
+          docs_sents_list = [
+               [sent for sent in doc.sents]
+               for doc in nlp_coref.pipe(input_texts, batch_size=3)
+          ]
+          
+          yield docs_sents_list
+          
+          del input_texts, docs_sents_list
+          clean_memory()
 
 def split_sentences_pipe(documents_list):
      """Splits sentences in each document within the list.
@@ -94,6 +111,31 @@ def optimized_split_doc_sent(text):
      doc = nlp_coref(text.strip())
      return [sent.text for sent in doc.sents]
 
+def generator_extract_keywords(documents_list, sentBERT_model, words_per_100=1, min_keywords=2, max_keywords=15):
+     kw_model = KeyBERT(model=sentBERT_model)
+     
+     for documents in documents_list:
+          ## dynamic top_n
+          avg_length = sum(len(doc) for doc in documents) // len(documents)
+          top_n = max(min_keywords, min(max_keywords, (avg_length // 100) * words_per_100))
+          docs_texts = [doc[0] for doc in documents] ## convert to string list
+          
+          keywords = kw_model.extract_keywords(
+               docs_texts,
+               top_n=top_n,
+               stop_words='english',
+               use_mmr=True,
+               diversity=0.6,
+               keyphrase_ngram_range=(1, 2)
+          )
+          
+          yield keywords
+          
+          del keywords, docs_texts
+     
+     del kw_model
+     clean_memory()
+
 def extract_keywords(documents_list,sentBERT_model, words_per_100=1, min_keywords=2, max_keywords=15):
      """extract key word from each document, default 10 words
 
@@ -129,48 +171,41 @@ def extract_keywords(documents_list,sentBERT_model, words_per_100=1, min_keyword
      
      return keywords_list
 
-def coref_resolve(documents_list):
-     """_summary_ coreference resolve
-
-     Args:
-          documents_list (_type_): documents with sentences
-
-     Returns:
-          _type_: coref_cluster for each document. form as orginal dataset. cluster element: (training_idx, doc_idx, sent), to find node id.
-     """
-     coref_docs_list= []
+def generator_coref_resolve(documents_list):
+     
      for training_id, docs in enumerate(documents_list):
           coref_docs = []
-          for doc_id, document in enumerate(docs):
-               doc = nlp_coref(document[0].strip())
+          doc_texts = [doc[0].strip() for doc in docs]
+          
+          for doc_id, doc in enumerate(nlp_coref.pipe(doc_texts, batch_size=3)):
                coref_doc = []
                
-               for chain in doc._.coref_chains: ## coreference cluster
-                    coref_cluster = []
-                    ## resolve the sentence it belongs to. antecednet in the first place
+               for chain in doc._.coref_chains:
+                    cluster = []
+                    
+                    # Process antecedent first
                     antecedent_pos = chain.most_specific_mention_index
-                    antecedent_id = chain[antecedent_pos][0]
-                    ant_sent_txt = doc[antecedent_id].sent
-                    
-                    coref_cluster.append((training_id, doc_id, str(ant_sent_txt)))
-                    
-                    for idx, mention in enumerate(chain):
-                         if idx == antecedent_pos: continue
-                         
-                         token_id = mention[0]
-                         sent_txt = doc[token_id].sent
-                         key = (training_id, doc_id, str(sent_txt))
-                         if key not in coref_cluster:
-                              coref_cluster.append(key)
+                    antecedent = chain[antecedent_pos][0] ## token position.
+                    key = (training_id, doc_id, antecedent)
+                    cluster.append(key)
 
-                    if len(coref_cluster) > 1: ## can not connect with itself
-                         coref_doc.append(coref_cluster)
+                    # Process other mentions
+                    for idx, mention in enumerate(chain):
+                         if idx == antecedent_pos:
+                              continue
+                         token_id = mention[0]
+                         # sent = str(doc[token_id].sent)
+                         key = (training_id, doc_id, token_id)
+                         cluster.append(key)
+
+                    if len(cluster) > 1:
+                         coref_doc.append(cluster)
           
                coref_docs.append(coref_doc)
           
-          coref_docs_list.append(coref_docs)
-     
-     return coref_docs_list
+          yield coref_docs
+          
+          del coref_docs, doc_texts
 
 def coref_resolve2(documents_list):
      """ higher speed
@@ -234,17 +269,15 @@ def define_node_edge(documents_list, edge_similarity_threshold = 0.6):
      sentBERT_model = SentenceTransformer('all-MiniLM-L6-v2', device=device)
 
      prepro_start_time = time.time()
-     docs_sents_obj_list = split_sentences_pipe(documents_list)
-     docs_kws_scores_list = extract_keywords(documents_list, sentBERT_model)
-     docs_corefs_list = coref_resolve2(documents_list)
-     prepro_end_time = time.time()
-     print(f"Finish preprocess, time cost:  {prepro_end_time - prepro_start_time:.4f} s.")
+     docs_sents_gen = generator_split_sentences(documents_list)
+     docs_kws_gen = generator_extract_keywords(documents_list, sentBERT_model)
+     docs_corfs_gen = generator_coref_resolve(documents_list)
      
      edge_data_list = []
      word_node_list = []
      sent_node_list = []
      sentId_nodeId_list = []
-     for training_idx, (docs_sent_objs, docs_kws_scores, docs_corefs) in enumerate(zip(docs_sents_obj_list, docs_kws_scores_list, docs_corefs_list)):
+     for training_idx, (docs_sent_objs, docs_kws_scores, docs_corefs) in enumerate(zip_longest(docs_sents_gen, docs_kws_gen, docs_corfs_gen)):
           node_index = 0
           
           # sentence node index
@@ -339,14 +372,14 @@ def define_node_edge(documents_list, edge_similarity_threshold = 0.6):
           word_node_list.append(word_nodeId_map)
           sent_node_list.append(sent_nodeId_map)
           sentId_nodeId_list.append(sentId_nodeId_map)
+          
+          del docs_sent_objs, docs_kws_scores, docs_corefs
      
      del sentBERT_model
      clean_memory()
      
+     prepro_end_time = time.time()
+     print(f"Finish preprocess, time cost:  {prepro_end_time - prepro_start_time:.4f} s.")
      print_gpu_memory("after preprocess")
      
      return word_node_list, sent_node_list, edge_data_list, sentId_nodeId_list
-
-def chunker(seq, chunk_size):
-     for i in range(0, len(seq), chunk_size):
-          yield seq[i:i+chunk_size]
