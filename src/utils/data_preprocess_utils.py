@@ -206,6 +206,7 @@ def generator_coref_resolve(documents_list):
           yield coref_docs
           
           del coref_docs, doc_texts
+          clean_memory()
 
 def coref_resolve2(documents_list):
      """ higher speed
@@ -277,103 +278,110 @@ def define_node_edge(documents_list, edge_similarity_threshold = 0.6):
      word_node_list = []
      sent_node_list = []
      sentId_nodeId_list = []
-     for training_idx, (docs_sent_objs, docs_kws_scores, docs_corefs) in enumerate(zip_longest(docs_sents_gen, docs_kws_gen, docs_corfs_gen)):
-          node_index = 0
-          
-          # sentence node index
-          sentId_nodeId_map = {}
-          token_node_map = {} ## for coreference resolve. each doc hold a token-node list
-          sent_nodeId_map = defaultdict(list) ## need to handle repeat sent
-          for doc_idx, sent_objs in enumerate(docs_sent_objs):
-               token_node_list = [-1] * sum(len(sent) for sent in sent_objs)
-               for sent_id, sent_obj in enumerate(sent_objs):
-                    sentId_nodeId_map[(training_idx, doc_idx, sent_id)] = node_index
-                    sent_nodeId_map[((training_idx, doc_idx, sent_obj.text))].append(node_index)
+     try:
+          for training_idx, (docs_sent_objs, docs_kws_scores, docs_corefs) in enumerate(zip_longest(docs_sents_gen, docs_kws_gen, docs_corfs_gen)):
+               if(docs_sent_objs is None or docs_kws_scores is None or docs_corefs is None): break
+               node_index = 0
+               
+               # sentence node index
+               sentId_nodeId_map = {}
+               token_node_map = {} ## for coreference resolve. each doc hold a token-node list
+               sent_nodeId_map = defaultdict(list) ## need to handle repeat sent
+               for doc_idx, sent_objs in enumerate(docs_sent_objs):
+                    token_node_list = [-1] * sum(len(sent) for sent in sent_objs)
+                    for sent_id, sent_obj in enumerate(sent_objs):
+                         sentId_nodeId_map[(training_idx, doc_idx, sent_id)] = node_index
+                         sent_nodeId_map[((training_idx, doc_idx, sent_obj.text))].append(node_index)
+                         
+                         for token in sent_obj:
+                              token_node_list[token.i] = node_index
+                         node_index += 1
                     
-                    for token in sent_obj:
-                         token_node_list[token.i] = node_index
-                    node_index += 1
-               
-               token_node_map[(training_idx, doc_idx)] = token_node_list
-               
-          # word node index
-          word_nodeId_map = {} ## for word-sentence edge
-          word_index = node_index
-          for doc_idx, doc_kws_scs in enumerate(docs_kws_scores):
-               for keyword, score in doc_kws_scs:
-                    if keyword not in word_nodeId_map:
-                         word_nodeId_map[keyword] = word_index
-                         word_index += 1
-          
-          edge_data = defaultdict(list)
-          def add_edge(node1_idx, node2_idx, edge_type, weight=1.0):
-               if torch.is_tensor(weight):
-                    weight = weight.detach().item()
+                    token_node_map[(training_idx, doc_idx)] = token_node_list
                     
-               ## advoid duplicate
-               if node1_idx == node2_idx: return
+               # word node index
+               word_nodeId_map = {} ## for word-sentence edge
+               word_index = node_index
+               for doc_idx, doc_kws_scs in enumerate(docs_kws_scores):
+                    for keyword, score in doc_kws_scs:
+                         if keyword not in word_nodeId_map:
+                              word_nodeId_map[keyword] = word_index
+                              word_index += 1
                
-               if ((node1_idx, node2_idx) in edge_data
-                    and {'type': edge_type, 'weight': weight} in edge_data[(node1_idx, node2_idx)]):
-                    return
-               
-               edge_data[(node1_idx, node2_idx)].append({'type': edge_type, 'weight': weight})
+               edge_data = defaultdict(list)
+               def add_edge(node1_idx, node2_idx, edge_type, weight=1.0):
+                    if torch.is_tensor(weight):
+                         weight = weight.detach().item()
+                         
+                    ## advoid duplicate
+                    if node1_idx == node2_idx: return
                     
-          ## 1. word-sentence
-          for doc_idx, sent_objs in enumerate(docs_sent_objs):
-               for sent_id, sent_obj in enumerate(sent_objs):
-                    ## check wether contain keywords
-                    sent_low = sent_obj.text.lower()
-                    for word, score in docs_kws_scores[doc_idx]:
-                         if word.lower() in sent_low:
-                              word_node = word_nodeId_map[word]
-                              sent_node = sentId_nodeId_map[(training_idx, doc_idx, sent_id)]
-                              add_edge(word_node, sent_node, "word_sent", weight=score)
-                              
-          ## 2. pronoun-antecedent
-          for doc_idx, doc_corefs in enumerate(docs_corefs): ## as [(training_id, doc_id, token_id)...]
-               doc_token_node_map = token_node_map[(training_idx, doc_idx)]
-               for corf_cluster in doc_corefs:
-                    antecedent = doc_token_node_map[corf_cluster[0][2]]
-                    for i in range(1, len(corf_cluster)):
-                         ## edge on each coref. the first one is the resolve
-                         add_edge(doc_token_node_map[corf_cluster[i][2]], antecedent, "pronoun_antecedent")
-          
-          ## 3. similarity
-          for doc_idx, sent_objs in enumerate(docs_sent_objs):
-               sents = [sent.text for sent in sent_objs]
-               # chunk embedding
-               chunk_size = 100
-               sent_embeddings = []
-               sent_size = len(sents)
-               with torch.no_grad():
-                    for i in range(0, sent_size, chunk_size):
-                         chunk = sents[i:i+chunk_size]
+                    if ((node1_idx, node2_idx) in edge_data
+                         and {'type': edge_type, 'weight': weight} in edge_data[(node1_idx, node2_idx)]):
+                         return
                     
-                         embeddings = sentBERT_model.encode(chunk, convert_to_tensor=True)
-                         sent_embeddings.append(embeddings)
-                    sent_embeddings = torch.cat(sent_embeddings)
+                    edge_data[(node1_idx, node2_idx)].append({'type': edge_type, 'weight': weight})
+                         
+               ## 1. word-sentence
+               for doc_idx, sent_objs in enumerate(docs_sent_objs):
+                    for sent_id, sent_obj in enumerate(sent_objs):
+                         ## check wether contain keywords
+                         sent_low = sent_obj.text.lower()
+                         for word, score in docs_kws_scores[doc_idx]:
+                              if word.lower() in sent_low:
+                                   word_node = word_nodeId_map[word]
+                                   sent_node = sentId_nodeId_map[(training_idx, doc_idx, sent_id)]
+                                   add_edge(word_node, sent_node, "word_sent", weight=score)
+                                   
+               ## 2. pronoun-antecedent
+               for doc_idx, doc_corefs in enumerate(docs_corefs): ## as [(training_id, doc_id, token_id)...]
+                    doc_token_node_map = token_node_map[(training_idx, doc_idx)]
+                    for corf_cluster in doc_corefs:
+                         antecedent = doc_token_node_map[corf_cluster[0][2]]
+                         for i in range(1, len(corf_cluster)):
+                              ## edge on each coref. the first one is the resolve
+                              add_edge(doc_token_node_map[corf_cluster[i][2]], antecedent, "pronoun_antecedent")
                
-               n = len(sent_embeddings)
-               normalized = sent_embeddings / sent_embeddings.norm(dim=1, keepdim=True).to(device)
-               
-               for i in range(n):
-                    for j in range(i+1, n):
-                         similarity = (normalized[i] * normalized[j]).sum()
-                         if similarity >= edge_similarity_threshold:
-                              node_i = sentId_nodeId_map[(training_idx, doc_idx, i)]
-                              node_j = sentId_nodeId_map[(training_idx, doc_idx, j)]
-                              
-                              add_edge(node_i, node_j, "similarity", weight=similarity)
+               ## 3. similarity
+               for doc_idx, sent_objs in enumerate(docs_sent_objs):
+                    sents = [sent.text for sent in sent_objs]
+                    # chunk embedding
+                    chunk_size = 100
+                    sent_embeddings = []
+                    sent_size = len(sents)
+                    with torch.no_grad():
+                         for i in range(0, sent_size, chunk_size):
+                              chunk = sents[i:i+chunk_size]
+                         
+                              embeddings = sentBERT_model.encode(chunk, convert_to_tensor=True)
+                              sent_embeddings.append(embeddings)
+                         sent_embeddings = torch.cat(sent_embeddings)
+                    
+                    n = len(sent_embeddings)
+                    normalized = sent_embeddings / sent_embeddings.norm(dim=1, keepdim=True).to(device)
+                    
+                    for i in range(n):
+                         for j in range(i+1, n):
+                              similarity = (normalized[i] * normalized[j]).sum()
+                              if similarity >= edge_similarity_threshold:
+                                   node_i = sentId_nodeId_map[(training_idx, doc_idx, i)]
+                                   node_j = sentId_nodeId_map[(training_idx, doc_idx, j)]
+                                   
+                                   add_edge(node_i, node_j, "similarity", weight=similarity)
 
-               del sent_embeddings, normalized
-          
-          edge_data_list.append(edge_data)
-          word_node_list.append(word_nodeId_map)
-          sent_node_list.append(sent_nodeId_map)
-          sentId_nodeId_list.append(sentId_nodeId_map)
-          
-          del docs_sent_objs, docs_kws_scores, docs_corefs
+                    del sent_embeddings, normalized
+               
+               edge_data_list.append(edge_data)
+               word_node_list.append(word_nodeId_map)
+               sent_node_list.append(sent_nodeId_map)
+               sentId_nodeId_list.append(sentId_nodeId_map)
+               
+               del docs_sent_objs, docs_kws_scores, docs_corefs
+               clean_memory()
+     except Exception as e:
+          print(f"[ERROR] {e}")
+          print("Error Trace back:")
+          traceback.print_exc()
      
      del sentBERT_model
      clean_memory()
