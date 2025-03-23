@@ -179,7 +179,9 @@ propcache==0.2.1
 protobuf==5.29.3
     # via -r requirements.in
 psutil==6.1.1
-    # via torch-geometric
+    # via
+    #   -r requirements.in
+    #   torch-geometric
 pyarrow==19.0.0
     # via datasets
 pydantic==1.10.20

@@ -13,11 +13,11 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 def get_embed_graph(file_path):
      docs_list, summary_list = load_jsonl(file_path)
-     print("Data file is loaded. Creating embedding graph...")
+     print("[preprocess] Data file is loaded. Creating embedding graph...")
      start = time.time()
      sample_graphs, node_maps = create_embed_graphs(docs_list)
      end = time.time()
-     print(f"Finish graph creation, time cost:  {end - start:.4f} s.")
+     print(f"[preprocess] Finish graph creation, time cost:  {end - start:.4f} s.")
      
      clean_memory()
      print_gpu_memory("after graph embedding")
@@ -38,10 +38,8 @@ def get_embed_graph_node_map(file_path):
 def create_embed_graphs(docs_list, sent_similarity = 0.6):
      word_nodeId_list, sent_nodeId_list, edge_data_list, sentid_node_map_list = define_node_edge(docs_list, sent_similarity)
      graph_list = create_graph(word_nodeId_list, sent_nodeId_list, edge_data_list)
-     print("Finish graph creation.".upper())
      embedded_graph_list = embed_nodes_gpu(graph_list, sentid_node_map_list)
      pyg_graph_list, nodeid_to_sent_map_list = convert_graph_from_nx_to_pyg(embedded_graph_list)
-     print("Finish graph embedding.".upper())
      node_sent_map_list = get_node_sent_map(embedded_graph_list, nodeid_to_sent_map_list) ## id -> sent
      
      return pyg_graph_list, node_sent_map_list

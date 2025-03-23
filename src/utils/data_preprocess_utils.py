@@ -12,7 +12,7 @@ from functools import wraps
 import traceback
 import os
 
-from utils.model_utils import clean_memory, print_gpu_memory
+from utils.model_utils import clean_memory, print_gpu_memory, print_cpu_memory
 
 # Load models - this should be done only once
 nlp_coref = spacy.load("en_core_web_lg")
@@ -280,7 +280,8 @@ def define_node_edge(documents_list, edge_similarity_threshold = 0.6):
      sentId_nodeId_list = []
      try:
           for training_idx, (docs_sent_objs, docs_kws_scores, docs_corefs) in enumerate(zip_longest(docs_sents_gen, docs_kws_gen, docs_corfs_gen)):
-               if(docs_sent_objs is None or docs_kws_scores is None or docs_corefs is None): break
+               if not (docs_sent_objs and docs_kws_scores and docs_corefs):
+                    break
                node_index = 0
                
                # sentence node index
@@ -321,7 +322,9 @@ def define_node_edge(documents_list, edge_similarity_threshold = 0.6):
                          return
                     
                     edge_data[(node1_idx, node2_idx)].append({'type': edge_type, 'weight': weight})
-                         
+               
+               print_cpu_memory(f"{training_idx}-th sample prepare") ### test
+               
                ## 1. word-sentence
                for doc_idx, sent_objs in enumerate(docs_sent_objs):
                     for sent_id, sent_obj in enumerate(sent_objs):
@@ -387,7 +390,7 @@ def define_node_edge(documents_list, edge_similarity_threshold = 0.6):
      clean_memory()
      
      prepro_end_time = time.time()
-     print(f"Finish preprocess, time cost:  {prepro_end_time - prepro_start_time:.4f} s.")
+     print(f"[preprocess] Finish preprocess, time cost:  {prepro_end_time - prepro_start_time:.4f} s.")
      print_gpu_memory("after preprocess")
      
      return word_node_list, sent_node_list, edge_data_list, sentId_nodeId_list

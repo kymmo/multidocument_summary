@@ -34,7 +34,6 @@ class OptimizedDataset(Dataset):
                if self._loaded.value:
                     return
                
-               print("Loading data into shared memory...")
                raw_data = get_embed_graph(self.file_path)
                
                self.data = []
@@ -57,7 +56,6 @@ class OptimizedDataset(Dataset):
                     self.data.append(shared_graph)
                
                self._loaded.value = True  # marked as loaded
-               print(f"Data has been loaded into memory!")
 
      def __len__(self):
           if not self._loaded.value:

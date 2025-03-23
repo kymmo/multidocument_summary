@@ -1,6 +1,7 @@
 from rouge_score import rouge_scorer
 import torch
 import gc
+import psutil
 from collections import defaultdict
 from rouge_score.scoring import Score
 
@@ -59,3 +60,10 @@ def print_gpu_memory(label):
      allocated = torch.cuda.memory_allocated() / 1024**3
      reserved = torch.cuda.memory_reserved() / 1024**3
      print(f"[{label}] GPU allocated: {allocated:.2f} GB | preserved: {reserved:.2f} GB")
+     
+def print_cpu_memory(label):
+     memory = psutil.virtual_memory()
+     cpu_percent = psutil.cpu_percent(interval=1)  ## 1 sec interval
+     
+     print(f"[{label}] CPU used: {cpu_percent}%")
+     print(f"[{label}] memory used: {memory.percent}%. Memory Detail: {memory.used / (1024 ** 3):.2f} GB | remaining: {memory.available / (1024 ** 3):.2f} GB")
