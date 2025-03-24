@@ -65,5 +65,4 @@ def print_cpu_memory(label):
      memory = psutil.virtual_memory()
      cpu_percent = psutil.cpu_percent(interval=1)  ## 1 sec interval
      
-     print(f"[{label}] CPU used: {cpu_percent}%")
-     print(f"[{label}] memory used: {memory.percent}%. Memory Detail: {memory.used / (1024 ** 3):.2f} GB | remaining: {memory.available / (1024 ** 3):.2f} GB")
+     print(f"[{label}] CPU used: {cpu_percent}%. Memory used: {memory.percent}%. Memory Detail: {memory.used / (1024 ** 3):.2f} GB | remaining: {memory.available / (1024 ** 3):.2f} GB")
