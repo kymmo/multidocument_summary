@@ -323,7 +323,7 @@ def define_node_edge(documents_list, edge_similarity_threshold = 0.6):
                     
                     edge_data[(node1_idx, node2_idx)].append({'type': edge_type, 'weight': weight})
                
-               if training_idx % 100 == 0: ### print per 100 sample, keep section alive
+               if training_idx % 50 == 0: ### print per 50 sample, keep section alive
                     print_cpu_memory(f"{training_idx}-th sample prepare") 
                
                ## 1. word-sentence
