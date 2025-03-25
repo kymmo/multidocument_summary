@@ -12,6 +12,7 @@ from transformers import T5Tokenizer, T5ForConditionalGeneration, T5Config
 from models.DatasetLoader import EvalDataset, OptimizedDataset, custom_collate_fn
 from models.CustomT5 import CustomT5
 from models.gnn_train_t5 import train_gnn
+from models.CheckPointManager import ModelCheckpointManager
 from utils.model_utils import freeze_model, clean_memory, print_gpu_memory
 from models.LongTextEncoder import LongTextEncoder
 
@@ -200,7 +201,7 @@ def chunked_cosine_similarity(embeddings, embedding_matrix, chunk_size=16):
           
      return torch.cat(similarities, dim=0)
 
-def fine_tune_t5(file_path, out_size, num_epochs = 20, batch_size = 4, accumulate_step = 4):
+def fine_tune_t5(file_path, out_size, num_epochs = 20, batch_size = 8, accumulate_step = 4):
      ## data load
      train_dataset = EvalDataset(file_path)
      train_dataloader = data_DataLoader(
@@ -210,6 +211,8 @@ def fine_tune_t5(file_path, out_size, num_epochs = 20, batch_size = 4, accumulat
           # pin_memory=True, ## data has been in GPU while training gnn
           collate_fn=custom_collate_fn
      )
+     
+     ckpt_mgr = ModelCheckpointManager(stage_name="custom_t5")
      
      ## models load
      gnn_model = torch.load('gnn_trained_weights.pt')
@@ -229,48 +232,100 @@ def fine_tune_t5(file_path, out_size, num_epochs = 20, batch_size = 4, accumulat
           weight_decay=0.01
      )
      scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=num_epochs)
+     scaler = torch.cuda.amp.GradScaler(enabled=True)
 
      print_gpu_memory("after t5 model loading")
      
      torch.cuda.empty_cache()
-     scaler = torch.cuda.amp.GradScaler(enabled=True)
-     print(f"Setting finish. Start training epoch...")
-     for epoch in range(num_epochs):
-          total_loss = 0.0
-          actual_batch_count = 0
+     resume = False
+     if (checkpoint := ckpt_mgr.load(device)) is not None:
+          custom_t5_model.load_state_dict(checkpoint['custom_t5_model_state'])
+          optimizer.load_state_dict(checkpoint['optimizer_state'])
+          scheduler.load_state_dict(checkpoint['scheduler_state'])
+          scaler.load_state_dict(checkpoint['scaler'])
           
-          for batch_idx, batch in enumerate(train_dataloader):
-               batch_graph, batch_map, batch_summary = batch
+          start_epoch = checkpoint['epoch']
+          accumulated_batches = checkpoint.get('accumulated_batches', 0)
+          resume = True
+          if accumulated_batches >= len(train_dataloader): ## new epoch
+               accumulated_batches = 0
+               start_epoch += 1
                
-               with torch.cuda.amp.autocast():
-                    batched_graph = Batch.from_data_list(batch_graph).to(device, non_blocking=True)
-                    sentence_feat = batched_graph['sentence'].x
-                    word_feat = batched_graph['word'].x
-                    sent_text = batched_graph['sentence'].text
-                    
-                    ## adding data noise
-                    corrupted_sentence_feat = F.dropout(sentence_feat, p=0.1, training=gnn_model.training)
-
-                    # forward
-                    gnn_embeddings = gnn_model(batched_graph, corrupted_sentence_feat, word_feat)
-                    concat_embs_list = get_combined_embed2(batch_graph, gnn_embeddings, sent_text)
-                    
-                    outputs = custom_t5_model(combin_embeddings_list = concat_embs_list, label_summaries=batch_summary)
-                    loss = outputs.loss
-                    loss = loss / accumulate_step
-                    
-               scaler.scale(loss).backward()
-               total_loss += loss.item() * accumulate_step
-               ## gradient accumulate
-               if ((batch_idx + 1) % accumulate_step == 0) or (batch_idx + 1 == len(train_dataloader)):
-                    actual_batch_count += 1
-                    scaler.step(optimizer)
-                    scaler.update()
-                    optimizer.zero_grad()
+          print(f"Resume training! From epoch {start_epoch}, batch {accumulated_batches}.")
           
-          avg_loss = total_loss / (actual_batch_count * accumulate_step) if actual_batch_count > 0 else 0
-          print(f"Epoch {epoch+1} / {num_epochs}, Loss: {avg_loss:.4f}, Learning Rate: {scheduler.get_last_lr()[0]:.6f}")
-          scheduler.step()
+     print(f"Setting finish. Start training epoch...")
+     try:
+          for epoch in range(start_epoch if resume else 0, num_epochs):
+               total_loss = 0.0
+               actual_batch_count = 0
+               
+               optimizer.zero_grad()
+               skip_batches = accumulated_batches if resume else 0
+
+               for batch_idx, batch in enumerate(train_dataloader):
+                    if batch_idx < skip_batches:
+                         continue
+               
+                    batch_graph, batch_map, batch_summary = batch
+                    
+                    with torch.cuda.amp.autocast():
+                         batched_graph = Batch.from_data_list(batch_graph).to(device, non_blocking=True)
+                         sentence_feat = batched_graph['sentence'].x
+                         word_feat = batched_graph['word'].x
+                         sent_text = batched_graph['sentence'].text
+                         
+                         ## adding data noise
+                         corrupted_sentence_feat = F.dropout(sentence_feat, p=0.1, training=gnn_model.training)
+
+                         # forward
+                         gnn_embeddings = gnn_model(batched_graph, corrupted_sentence_feat, word_feat)
+                         concat_embs_list = get_combined_embed2(batch_graph, gnn_embeddings, sent_text)
+                         
+                         outputs = custom_t5_model(combin_embeddings_list = concat_embs_list, label_summaries=batch_summary)
+                         loss = outputs.loss
+                         loss = loss / accumulate_step
+                         
+                    scaler.scale(loss).backward()
+                    total_loss += loss.item() * accumulate_step
+                    ## gradient accumulate
+                    if ((batch_idx + 1) % accumulate_step == 0) or (batch_idx + 1 >= len(train_dataloader)):
+                         actual_batch_count += 1
+                         scaler.step(optimizer)
+                         scaler.update()
+                         optimizer.zero_grad()
+                         
+                         ## check point
+                         ckpt_path = ckpt_mgr.save(
+                              epoch=epoch,
+                              models={'custom_t5_model': custom_t5_model},
+                              optimizers={'optimizer': optimizer},
+                              schedulers={'scheduler': scheduler},
+                              scaler=scaler,
+                              accumulated_batches= batch_idx + 1
+                         )
+                         print(f"[checkpoint saved] {epoch}-th epoch, {batch_idx + 1}-th batch checkpoint has saved to path {ckpt_path}")
+               
+               avg_loss = total_loss / (actual_batch_count * accumulate_step) if actual_batch_count > 0 else 0
+               print(f"Epoch {epoch+1} / {num_epochs}, Loss: {avg_loss:.4f}, Learning Rate: {scheduler.get_last_lr()[0]:.6f}")
+               scheduler.step()
+               
+               if resume: ## reset new state
+                    resume = False
+                    accumulated_batches = 0
+     
+     except Exception as e:
+          emergency_path = ckpt_mgr._get_filepath(emergency=True)
+          torch.save({
+               'custom_t5_model_state': custom_t5_model.state_dict(),
+               'optimizer_state': optimizer.state_dict(),
+               'scheduler_state': scheduler.state_dict(),
+               'scaler': scaler.state_dict(),
+               'epoch': epoch,
+               'accumulated_batches': batch_idx,
+               'exception': str(e)
+          }, emergency_path)
+          print(f"[Exception] Error!! Checkpoint has saved in {emergency_path}")
+          raise e
           
      custom_t5_model.save_pretrained("./fine_tuned_t5")
      

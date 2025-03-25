@@ -8,6 +8,7 @@ from transformers import T5Tokenizer, T5ForConditionalGeneration
 
 from models.RelHetGraph import RelHetGraph
 from models.DatasetLoader import EvalDataset, OptimizedDataset, custom_collate_fn
+from models.CheckPointManager import ModelCheckpointManager
 from utils.model_utils import freeze_model, clean_memory, print_gpu_memory
 
 base_model = "google-t5/t5-base"
@@ -44,57 +45,98 @@ def train_gnn(file_path, hidden_size, out_size, num_heads,sentence_in_size = 768
      ).to(device) ## non_linear transfer
      optimizer = torch.optim.Adam(list(gnn_model.parameters()) + list(T5_embed_layer_projector.parameters()), lr=learning_rate)
      scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=num_epochs)
+     scaler = torch.cuda.amp.GradScaler()
 
      print_gpu_memory("after gnn model loading")
      
+     # check point
+     ckpt_mgr = ModelCheckpointManager(stage_name="gnn_model")
+     best_loss = float('inf')
+     start_epoch = 0
+     if (checkpoint := ckpt_mgr.load(device)) is not None:
+          gnn_model.load_state_dict(checkpoint['gnn_model_state'])
+          T5_embed_layer_projector.load_state_dict(checkpoint['T5_projector_state'])
+          optimizer.load_state_dict(checkpoint['optimizer_state'])
+          scheduler.load_state_dict(checkpoint['scheduler_state'])
+          scaler.load_state_dict(checkpoint['scaler'])
+          
+          start_epoch = checkpoint['epoch'] + 1
+          best_loss = checkpoint.get('best_loss', float('inf'))
+          print(f"Resume training! From epoch {start_epoch}.")
+
+
      freeze_model(t5_model)
      t5_model.eval() ## no update for T5
-     scaler = torch.cuda.amp.GradScaler()
      print(f"Setting finish. Start training epoch...")
-     for epoch in range(num_epochs):
-          gnn_model.train() ## set to train mode
-          total_loss = 0
-          for batch in train_dataloader:
-               batch = batch.to(device)
+     try:
+          for epoch in range(start_epoch, num_epochs):
+               gnn_model.train() ## set to train mode
+               total_loss = 0
+               for batch in train_dataloader:
+                    batch = batch.to(device)
+                    
+                    with torch.cuda.amp.autocast():
+                         sentence_feat = batch['sentence'].x
+                         word_feat = batch['word'].x
+                         
+                         ## adding data noise
+                         corrupted_sentence_feat = F.dropout(sentence_feat, p=0.1, training=gnn_model.training)
+
+                         # forward
+                         optimizer.zero_grad()
+                         sentence_embeddings = gnn_model(batch, corrupted_sentence_feat, word_feat)
+
+                         # T5 NLL loss
+                         projected_embeddings = T5_embed_layer_projector(sentence_embeddings)
+                         reshape_embeddings = projected_embeddings.unsqueeze(1)  # fit the T5 input need (batch_size, sequence_length, hidden_size)
+                         
+                         ## labels calculate
+                         with torch.no_grad():
+                              t5_embedding_matrix = t5_model.get_input_embeddings().weight  # (vocab_size, hidden_dim)
+                              similarities = chunked_cosine_similarity(projected_embeddings, t5_embedding_matrix, chunk_size=8)
+                              # top_k_values, top_k_indices = similarities.topk(k=5, dim=1)
+                              # average_similarity = top_k_values.mean(dim=1)  # (batch_size,)
+                              # abs_diff = torch.abs(similarities - average_similarity.unsqueeze(1))  # (batch_size, vocab_size)
+                              # closest_token_ids = abs_diff.argmin(dim=1)  # (batch_size,)
+                              closest_token_ids = similarities.argmax(dim=1) ## most similar
+                              seq_length = reshape_embeddings.size(1)
+                              labels = closest_token_ids.unsqueeze(1).expand(-1, seq_length)  # (batch_size, seq_length)
+                              labels = labels.long().to(device)  # make sure long type and GPU calculation
+
+                         outputs = t5_model(inputs_embeds=reshape_embeddings, labels=labels)
+                         loss = outputs.loss
+
+                    scaler.scale(loss).backward()
+                    scaler.step(optimizer)
+                    scaler.update()
+                    total_loss += loss.item()
                
-               with torch.cuda.amp.autocast():
-                    sentence_feat = batch['sentence'].x
-                    word_feat = batch['word'].x
-                    
-                    ## adding data noise
-                    corrupted_sentence_feat = F.dropout(sentence_feat, p=0.1, training=gnn_model.training)
+               ckpt_path = ckpt_mgr.save(
+                    epoch=epoch,
+                    models={'gnn_model': gnn_model, 'T5_projector': T5_embed_layer_projector},
+                    optimizers={'optimizer': optimizer},
+                    schedulers={'scheduler': scheduler},
+                    scaler=scaler,
+                    best_loss=best_loss
+               )
+               print(f"[checkpoint saved] {epoch}-th epoch checkpoint has saved to path {ckpt_path}")
 
-                    # forward
-                    optimizer.zero_grad()
-                    sentence_embeddings = gnn_model(batch, corrupted_sentence_feat, word_feat)
-
-                    # T5 NLL loss
-                    projected_embeddings = T5_embed_layer_projector(sentence_embeddings)
-                    reshape_embeddings = projected_embeddings.unsqueeze(1)  # fit the T5 input need (batch_size, sequence_length, hidden_size)
-                    
-                    ## labels calculate
-                    with torch.no_grad():
-                         t5_embedding_matrix = t5_model.get_input_embeddings().weight  # (vocab_size, hidden_dim)
-                         similarities = chunked_cosine_similarity(projected_embeddings, t5_embedding_matrix, chunk_size=8)
-                         # top_k_values, top_k_indices = similarities.topk(k=5, dim=1)
-                         # average_similarity = top_k_values.mean(dim=1)  # (batch_size,)
-                         # abs_diff = torch.abs(similarities - average_similarity.unsqueeze(1))  # (batch_size, vocab_size)
-                         # closest_token_ids = abs_diff.argmin(dim=1)  # (batch_size,)
-                         closest_token_ids = similarities.argmax(dim=1) ## most similar
-                         seq_length = reshape_embeddings.size(1)
-                         labels = closest_token_ids.unsqueeze(1).expand(-1, seq_length)  # (batch_size, seq_length)
-                         labels = labels.long().to(device)  # make sure long type and GPU calculation
-
-                    outputs = t5_model(inputs_embeds=reshape_embeddings, labels=labels)
-                    loss = outputs.loss
-
-               scaler.scale(loss).backward()
-               scaler.step(optimizer)
-               scaler.update()
-               total_loss += loss.item()
-          
-          print(f"Epoch {epoch+1} / {num_epochs}, Loss: {total_loss/len(train_dataloader):.4f}, Learning Rate: {scheduler.get_last_lr()[0]:.6f}")
-          scheduler.step()
+               print(f"Epoch {epoch+1} / {num_epochs}, Loss: {total_loss/len(train_dataloader):.4f}, Learning Rate: {scheduler.get_last_lr()[0]:.6f}")
+               scheduler.step()
+     
+     except Exception as e:
+          emergency_path = ckpt_mgr._get_filepath(emergency=True)
+          torch.save({
+               'gnn_model_state': gnn_model.state_dict(),
+               'T5_projector_state': T5_embed_layer_projector.state_dict(),
+               'optimizer_state': optimizer.state_dict(),
+               'scheduler_state': scheduler.state_dict(),
+               'scaler': scaler.state_dict(),
+               'epoch': epoch,
+               'exception': str(e)
+          }, emergency_path)
+          print(f"[Exception] Error!! Checkpoint has saved in {emergency_path}")
+          raise e
      
      if save_method == 'entire_model':
           ## save entire model
@@ -103,9 +145,7 @@ def train_gnn(file_path, hidden_size, out_size, num_heads,sentence_in_size = 768
           ## capabal to old version
           torch.save(gnn_model.state_dict(), 'gnn_trained_weights.pth')
           torch.save(T5_embed_layer_projector.state_dict(), 't5_projector_weights.pth')
-     
-     print("GNN Training Finish.")
-     
+          
      del gnn_model
      del T5_embed_layer_projector
      clean_memory()

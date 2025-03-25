@@ -8,6 +8,7 @@ from contextlib import contextmanager
 
 from utils.data_preprocess_utils import define_node_edge, load_jsonl
 from utils.model_utils import clean_memory, print_gpu_memory
+from models.CheckPointManager import DataCheckpointManager
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -36,9 +37,56 @@ def get_embed_graph_node_map(file_path):
      return sample_graphs, node_maps, summary_list
 
 def create_embed_graphs(docs_list, sent_similarity = 0.6):
-     word_nodeId_list, sent_nodeId_list, edge_data_list, sentid_node_map_list = define_node_edge(docs_list, sent_similarity)
-     graph_list = create_graph(word_nodeId_list, sent_nodeId_list, edge_data_list)
-     embedded_graph_list = embed_nodes_gpu(graph_list, sentid_node_map_list)
+     data_cpt = DataCheckpointManager()
+     if (latest_step := data_cpt.get_latest_step()):
+          print(f"Resume from step: [{latest_step}]")
+     
+     define_node_key = data_cpt.StepKey.PREDEFINE.value
+     graph_create_key = data_cpt.StepKey.GRAPH.value
+     embed_graph_key = data_cpt.StepKey.EMBED.value
+     
+     ############# define graph node and edge
+     if not latest_step or latest_step in [define_node_key]:
+          if not latest_step:
+               word_nodeId_list, sent_nodeId_list, edge_data_list, sentid_node_map_list = define_node_edge(docs_list, sent_similarity)
+               data_cpt.save_step(define_node_key, {
+                    'word_nodeId_list': word_nodeId_list,
+                    'sent_nodeId_list': sent_nodeId_list,
+                    'edge_data_list': edge_data_list,
+                    'sentid_node_map_list': sentid_node_map_list
+               })
+          else:
+               data = data_cpt.load_step(define_node_key)
+               word_nodeId_list = data['word_nodeId_list']
+               sent_nodeId_list = data['sent_nodeId_list']
+               edge_data_list = data['edge_data_list']
+               sentid_node_map_list = data['sentid_node_map_list']
+     
+     ############# create graph with node and edge
+     if not latest_step or latest_step in [define_node_key, graph_create_key]:
+          if not latest_step or latest_step != graph_create_key:
+               graph_list = create_graph(word_nodeId_list, sent_nodeId_list, edge_data_list)
+               data_cpt.save_step(graph_create_key, {
+                    'graph_list': graph_list
+               })
+          else:
+               data = data_cpt.load_step(graph_create_key)
+               graph_list = data['graph_list']
+               data = data_cpt.load_step(define_node_key)
+               sentid_node_map_list = data['sentid_node_map_list']
+               
+     ############# embed graph nodes
+     if not latest_step or latest_step in [define_node_key, graph_create_key, embed_graph_key]:
+          if not latest_step or latest_step != embed_graph_key:
+               embedded_graph_list = embed_nodes_gpu(graph_list, sentid_node_map_list)
+               data_cpt.save_step(embed_graph_key, {
+                    'embedded_graph_list': embedded_graph_list
+               })
+          else:
+               data = data_cpt.load_step(embed_graph_key)
+               embedded_graph_list = data['embedded_graph_list']
+               
+     ############# graph format convert
      pyg_graph_list, nodeid_to_sent_map_list = convert_graph_from_nx_to_pyg(embedded_graph_list)
      node_sent_map_list = get_node_sent_map(embedded_graph_list, nodeid_to_sent_map_list) ## id -> sent
      
