@@ -45,7 +45,7 @@ def generator_split_sentences(documents_list):
           # flowing process
           docs_sents_list = [
                [sent for sent in doc.sents]
-               for doc in nlp_coref.pipe(input_texts, batch_size=3)
+               for doc in nlp_coref.pipe(input_texts, batch_size=5)
           ]
           
           yield docs_sents_list
@@ -177,7 +177,7 @@ def generator_coref_resolve(documents_list):
           coref_docs = []
           doc_texts = [doc[0].strip() for doc in docs]
           
-          for doc_id, doc in enumerate(nlp_coref.pipe(doc_texts, batch_size=3)):
+          for doc_id, doc in enumerate(nlp_coref.pipe(doc_texts, batch_size=5)):
                coref_doc = []
                
                for chain in doc._.coref_chains:
@@ -323,9 +323,6 @@ def define_node_edge(documents_list, edge_similarity_threshold = 0.6):
                     
                     edge_data[(node1_idx, node2_idx)].append({'type': edge_type, 'weight': weight})
                
-               if training_idx % 50 == 0: ### print per 50 sample, keep section alive
-                    print_cpu_memory(f"{training_idx}-th sample prepare") 
-               
                ## 1. word-sentence
                for doc_idx, sent_objs in enumerate(docs_sent_objs):
                     for sent_id, sent_obj in enumerate(sent_objs):
@@ -375,6 +372,9 @@ def define_node_edge(documents_list, edge_similarity_threshold = 0.6):
 
                     del sent_embeddings, normalized
                
+               if training_idx % 100 == 0: ### print per 100 sample, keep section alive
+                    print_cpu_memory(f"{training_idx}-th sample prepare") 
+                    
                edge_data_list.append(edge_data)
                word_node_list.append(word_nodeId_map)
                sent_node_list.append(sent_nodeId_map)

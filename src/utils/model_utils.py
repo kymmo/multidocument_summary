@@ -61,8 +61,8 @@ def print_gpu_memory(label):
      reserved = torch.cuda.memory_reserved() / 1024**3
      print(f"[{label}] GPU allocated: {allocated:.2f} GB | preserved: {reserved:.2f} GB")
      
-def print_cpu_memory(label):
+def print_cpu_memory(label, interval = 1):
      memory = psutil.virtual_memory()
-     cpu_percent = psutil.cpu_percent(interval=1)  ## 1 sec interval
+     cpu_percent = psutil.cpu_percent(interval=interval)  ## 1 sec interval
      
      print(f"[{label}] CPU used: {cpu_percent}%. Memory used: {memory.percent}%. Memory Detail: {memory.used / (1024 ** 3):.2f} GB | remaining: {memory.available / (1024 ** 3):.2f} GB")
