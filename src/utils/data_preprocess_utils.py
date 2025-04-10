@@ -9,7 +9,9 @@ from itertools import zip_longest
 from sentence_transformers import SentenceTransformer
 from concurrent.futures import ProcessPoolExecutor
 from functools import wraps
+import torch.nn.functional as F
 import traceback
+import string
 import os
 
 from utils.model_utils import clean_memory, print_gpu_memory, print_cpu_memory
@@ -18,6 +20,8 @@ from utils.model_utils import clean_memory, print_gpu_memory, print_cpu_memory
 nlp_coref = spacy.load("en_core_web_lg")
 nlp_coref.add_pipe('coreferee')
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+BATCH_SIZE = 30
 
 def load_jsonl(file_path):
      """  Loads data from a JSONL file with the correct multi-document format.
@@ -45,7 +49,7 @@ def generator_split_sentences(documents_list):
           # flowing process
           docs_sents_list = [
                [sent for sent in doc.sents]
-               for doc in nlp_coref.pipe(input_texts, batch_size=5)
+               for doc in nlp_coref.pipe(input_texts, batch_size=BATCH_SIZE)
           ]
           
           yield docs_sents_list
@@ -63,7 +67,7 @@ def split_sentences_pipe(documents_list):
           input_texts = [doc[0].strip() for doc in docs]
           docs_sents_list = [
                [sent for sent in doc.sents]
-               for doc in nlp_coref.pipe(input_texts, batch_size=5)
+               for doc in nlp_coref.pipe(input_texts, batch_size=BATCH_SIZE)
           ]
           processed_documents_list.append(docs_sents_list)
      
@@ -116,9 +120,9 @@ def generator_extract_keywords(documents_list, sentBERT_model, words_per_100=1, 
      
      for documents in documents_list:
           ## dynamic top_n
-          avg_length = sum(len(doc) for doc in documents) // len(documents)
-          top_n = max(min_keywords, min(max_keywords, (avg_length // 100) * words_per_100))
           docs_texts = [doc[0] for doc in documents] ## convert to string list
+          avg_length = max([count_words(doc) for doc in docs_texts])
+          top_n = max(min_keywords, min(max_keywords, (avg_length // 100) * words_per_100))
           
           keywords = kw_model.extract_keywords(
                docs_texts,
@@ -135,6 +139,13 @@ def generator_extract_keywords(documents_list, sentBERT_model, words_per_100=1, 
      
      del kw_model
      clean_memory()
+     
+def count_words(text):
+     translator = str.maketrans('', '', string.punctuation)
+     text_without_punct = text.translate(translator)
+     # 分割成单词
+     words = text_without_punct.split()
+     return len(words)
 
 def extract_keywords(documents_list,sentBERT_model, words_per_100=1, min_keywords=2, max_keywords=15):
      """extract key word from each document, default 10 words
@@ -177,7 +188,7 @@ def generator_coref_resolve(documents_list):
           coref_docs = []
           doc_texts = [doc[0].strip() for doc in docs]
           
-          for doc_id, doc in enumerate(nlp_coref.pipe(doc_texts, batch_size=5)):
+          for doc_id, doc in enumerate(nlp_coref.pipe(doc_texts, batch_size=BATCH_SIZE)):
                coref_doc = []
                
                for chain in doc._.coref_chains:
@@ -292,7 +303,7 @@ def define_node_edge(documents_list, edge_similarity_threshold = 0.6):
                     token_node_list = [-1] * sum(len(sent) for sent in sent_objs)
                     for sent_id, sent_obj in enumerate(sent_objs):
                          sentId_nodeId_map[(training_idx, doc_idx, sent_id)] = node_index
-                         sent_nodeId_map[((training_idx, doc_idx, sent_obj.text))].append(node_index)
+                         sent_nodeId_map[(training_idx, doc_idx, sent_obj.text)].append(node_index)
                          
                          for token in sent_obj:
                               token_node_list[token.i] = node_index
@@ -359,20 +370,20 @@ def define_node_edge(documents_list, edge_similarity_threshold = 0.6):
                          sent_embeddings = torch.cat(sent_embeddings)
                     
                     n = len(sent_embeddings)
-                    normalized = sent_embeddings / sent_embeddings.norm(dim=1, keepdim=True).to(device)
+                    normalized = F.normalize(sent_embeddings, p=2, dim=1).to(device)
                     
                     for i in range(n):
                          for j in range(i+1, n):
                               similarity = (normalized[i] * normalized[j]).sum()
-                              if similarity >= edge_similarity_threshold:
+                              if abs(similarity) >= edge_similarity_threshold:
                                    node_i = sentId_nodeId_map[(training_idx, doc_idx, i)]
                                    node_j = sentId_nodeId_map[(training_idx, doc_idx, j)]
-                                   
                                    add_edge(node_i, node_j, "similarity", weight=similarity)
 
                     del sent_embeddings, normalized
-               
-               if training_idx % 100 == 0: ### print per 100 sample, keep section alive
+                    
+                                   
+               if (training_idx + 1) % 100 == 0: ### print per 100 sample, keep section alive
                     print_cpu_memory(f"{training_idx}-th sample prepare") 
                     
                edge_data_list.append(edge_data)

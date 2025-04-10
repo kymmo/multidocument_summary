@@ -7,6 +7,7 @@ from torch_geometric.data import HeteroData
 from contextlib import contextmanager
 
 from utils.data_preprocess_utils import define_node_edge, load_jsonl
+from utils.define_node import define_node_edge_opt_parallel
 from utils.model_utils import clean_memory, print_gpu_memory
 from models.CheckPointManager import DataCheckpointManager
 
@@ -48,7 +49,7 @@ def create_embed_graphs(docs_list, sent_similarity = 0.6):
      ############# define graph node and edge
      if not latest_step or latest_step in [define_node_key]:
           if not latest_step:
-               word_nodeId_list, sent_nodeId_list, edge_data_list, sentid_node_map_list = define_node_edge(docs_list, sent_similarity)
+               word_nodeId_list, sent_nodeId_list, edge_data_list, sentid_node_map_list = define_node_edge_opt_parallel(docs_list, sent_similarity)
                data_cpt.save_step(define_node_key, {
                     'word_nodeId_list': word_nodeId_list,
                     'sent_nodeId_list': sent_nodeId_list,
@@ -147,6 +148,7 @@ def load_bert_models(models_info, device):
           for model in models.values():
                del model
           
+          clean_memory()
 
 def embed_nodes_gpu(graphs, sentid_node_map_list):
      """Embeds nodes in the graph using SBERT, BERT, and positional embeddings."""

@@ -4,6 +4,7 @@ import gc
 import psutil
 from collections import defaultdict
 from rouge_score.scoring import Score
+import multiprocessing
 
 def clean_memory():
      gc.collect()
@@ -66,3 +67,21 @@ def print_cpu_memory(label, interval = 1):
      cpu_percent = psutil.cpu_percent(interval=interval)  ## 1 sec interval
      
      print(f"[{label}] CPU used: {cpu_percent}%. Memory used: {memory.percent}%. Memory Detail: {memory.used / (1024 ** 3):.2f} GB | remaining: {memory.available / (1024 ** 3):.2f} GB")
+     
+def auto_workers():
+     """Estimates optimal number of workers based on CPU and memory."""
+     try:
+          mem_available_gb = psutil.virtual_memory().available / (1024 ** 3)
+          # Estimate memory per worker
+          model_mem_gb = 1.5 # GB
+          cpu_cnt = multiprocessing.cpu_count()
+
+          mem_limit_workers = max(1, int((mem_available_gb * 0.90) / model_mem_gb)) # Use 90% of available mem
+          # Leave at least one CPU core free for the main process and OS
+          cpu_limit_workers = max(1, cpu_cnt - 1)
+
+          workers = min(cpu_limit_workers, mem_limit_workers)
+          return max(workers, 2)
+     except Exception as e:
+          print(f"[WARN] Failed to determine optimal workers automatically: {e}. Falling back to 2.")
+          return 2 # Fallback value

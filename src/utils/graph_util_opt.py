@@ -1,0 +1,521 @@
+import torch
+import networkx as nx
+from transformers import BertModel, BertTokenizer, BertConfig
+from sentence_transformers import SentenceTransformer
+from torch_geometric.data import HeteroData
+from contextlib import contextmanager
+import concurrent.futures
+import multiprocessing
+
+import os
+import tqdm
+import time
+
+from models.CheckPointManager import DataCheckpointManager
+from utils.define_node import define_node_edge_opt_parallel
+from utils.model_utils import auto_workers, clean_memory
+
+# --- Configuration ---
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+# --- Model Loading (Unchanged) ---
+
+@contextmanager
+def load_bert_models(models_info, target_device):
+     """
+     Context manager to load specified BERT models onto a device
+     and ensure they are deleted from memory afterwards.
+     """
+     models = {}
+     print(f"Loading models onto {target_device}...")
+     try:
+          for model_type, model_name in models_info.items():
+               if model_type == 'normal':
+                    models[model_type] = BertModel.from_pretrained(model_name).to(target_device)
+               elif model_type == 'abs_pos':
+                    bert_config_abs = BertConfig.from_pretrained(model_name)
+                    bert_config_abs.position_embedding_type = "absolute"
+                    # Load state dict manually if needed for custom config without weights
+                    # Or ensure the base model weights are loaded correctly
+                    models[model_type] = BertModel.from_pretrained(model_name, config=bert_config_abs).to(target_device)
+               elif model_type == 'rel_pos':
+                    bert_config_rel = BertConfig.from_pretrained(model_name)
+                    bert_config_rel.position_embedding_type = "relative_key"
+                    # Load state dict manually if needed for custom config without weights
+                    # Or ensure the base model weights are loaded correctly
+                    models[model_type] = BertModel.from_pretrained(model_name, config=bert_config_rel).to(target_device)
+               elif model_type == 'tokenizer':
+                    models[model_type] = BertTokenizer.from_pretrained(model_name)
+               elif model_type == 'sent_bert':
+                    # SentenceTransformer handles device placement internally if passed at init
+                    models[model_type] = SentenceTransformer(model_name, device=target_device)
+               else:
+                    raise ValueError(f"Unsupported model type: {model_type}")
+               print(f"  Loaded {model_type}.")
+          
+          print("All models loaded.")
+          yield models
+
+     finally:
+          # Clean up models after use to free memory
+          print("Cleaning up loaded models...")
+          for model_name, model in models.items():
+               del model
+          
+          clean_memory()
+          print("Model cleanup complete.")
+
+def get_sent_pos_encoding(sentid_node_map_list, bert_abs_model, bert_relative_model):
+     sent_pos_emb_list = []
+     
+     for sentid_node_map in sentid_node_map_list:
+          sent_node_emb_map = {}
+          doc_sentinel = -1
+          doc_size = 1 + next(reversed(sentid_node_map.items()))[0][1] ## the second key is doc_id
+          # doc absolute position embedding
+          doc_input_ids = [i for i in range(doc_size)]
+          doc_pos_embeddings = bert_abs_model.embeddings.position_embeddings(torch.tensor(doc_input_ids).to(device))
+          sent_pos_embeddings = []
+
+          for (training_id, doc_id, sent_id), node_id in reversed(sentid_node_map.items()):
+               if(doc_id == doc_sentinel):
+                    node_embedding = doc_pos_embeddings[doc_id] + sent_pos_embeddings[sent_id]
+                    sent_node_emb_map[node_id] = node_embedding
+                    continue
+               
+               doc_sentinel = doc_id
+
+               # sentence relative position embedding
+               # sent_input_ids = [i for i in range(sent_id + 1)]
+               sent_pos_embeddings = []
+               embedding_size = 512
+               sent_size = sent_id + 1
+               overlap = 5
+               i = 0
+               while i < sent_size: ## in case the sent number exceeds the embedding size:512
+                    start_pos = max(0, i - overlap)
+                    end_pos = min(sent_size, start_pos + embedding_size)
+                    # batch = sent_input_ids[start_pos:end_pos]
+                    batch = [j for j in range((end_pos - start_pos))]
+                    
+                    batch_emb = bert_relative_model.embeddings.position_embeddings(torch.tensor(batch).to(device))
+                    next_id = 0 if start_pos == 0 else overlap
+                    sent_pos_embeddings.extend(batch_emb[next_id:]) ## simplely cut
+                    i = end_pos
+                    
+               node_embedding = doc_pos_embeddings[doc_id] + sent_pos_embeddings[sent_id]
+               sent_node_emb_map[node_id] = node_embedding
+
+          sent_pos_emb_list.append(sent_node_emb_map)
+     
+     return sent_pos_emb_list
+
+
+# --- Parallel Graph Creation (Worker Function) ---
+def parallel_create_graph(args):
+     """
+     Worker function for multiprocessing: Creates a single NetworkX graph.
+     Takes a tuple of (word_node_map, sent_node_map, edges_data) as input.
+     Ensures graph attributes are picklable.
+     """
+     word_node_map, sent_node_map, edges_data = args
+     graph = nx.MultiDiGraph()
+
+     # Add word nodes
+     word_nodes = [(w_node_id, {"type": "word", "text": word}) # Ensure text is string
+                    for word, w_node_id in word_node_map.items()]
+     graph.add_nodes_from(word_nodes)
+
+     # Add sentence nodes
+     sent_nodes = [(s_node_id, {"type": "sentence", "text": sent_triple}) # Ensure types
+                    for sent_triple, s_node_id_list in sent_node_map.items()
+                    for s_node_id in s_node_id_list]
+     graph.add_nodes_from(sent_nodes)
+
+     # Add edges
+     edges = []
+     for (node1, node2), edge_list in edges_data.items():
+          for edge in edge_list:
+               # Ensure edge attributes are simple, picklable types
+               edge_attr = {
+                    "edge_type": edge["type"],
+                    "weight": edge["weight"]
+               }
+               # Add edges in both directions as per original logic
+               edges.append((node1, node2, edge_attr))
+               edges.append((node2, node1, edge_attr))
+
+     graph.add_edges_from(edges)
+     
+     return graph # NetworkX graphs are generally picklable
+
+
+# --- Node Embedding (Optimized) ---
+
+def embed_nodes_gpu(graphs, sentid_node_map_list, word_batch_size=64, sentence_batch_size=32):
+     """
+     Embeds nodes using BERT models on GPU.
+     - Batches word embeddings for efficiency.
+     - Assigns sentence embeddings efficiently.
+     - Returns graphs with embeddings attached (still on GPU).
+     """
+     models_info = {
+          'normal': 'bert-base-uncased',
+          'abs_pos': 'bert-base-uncased',
+          'rel_pos': 'bert-base-uncased',
+          'tokenizer': 'bert-base-uncased',
+          'sent_bert': 'all-MiniLM-L6-v2',
+     }
+     embedded_graphs = []
+     
+     # Use the globally defined device
+     print(f"Embedding nodes on device: {device}")
+
+     with load_bert_models(models_info, device) as models:
+          # Get models from context manager
+          bert_abs_model = models["abs_pos"].eval()
+          bert_relative_model = models["rel_pos"].eval()
+          bert_tokenizer = models["tokenizer"]
+          bert_model = models["normal"].eval()
+          sentBERT_model = models["sent_bert"] # SentenceTransformer handles eval mode internally
+
+          # Pre-calculate all positional embeddings first
+          start_time = time.time()
+          sent_node_embedding_map_list = get_sent_pos_encoding(sentid_node_map_list, bert_abs_model, bert_relative_model)
+          print(f"Positional embeddings calculated in {time.time() - start_time:.2f}s")
+
+          # Process each graph
+          for i, graph in enumerate(graphs):
+               start_graph_time = time.time()
+               sent_node_embedding_map = sent_node_embedding_map_list[i]
+
+               # --- Sentence Embedding (Batched) ---
+               sentences_data = [] # Store (node_id, text, position_embedding)
+               sentence_nodes_to_embed = [] # Store node ids that need SBERT embedding
+               word_texts = []
+               word_node_ids = []
+               for node, data in graph.nodes(data=True):
+                    if data['type'] == 'sentence':
+                         if node in sent_node_embedding_map:
+                              pos_embedding = sent_node_embedding_map[node] # Get pre-calculated pos embedding
+                              sentences_data.append((node, data['text'][2], pos_embedding)) # Use text part for SBERT
+                              sentence_nodes_to_embed.append(node)
+                         else:
+                              print(f"Warning: Node {node} (sentence) not found in positional embedding map for graph {i}. Skipping.")
+                    elif data['type'] == 'word':
+                         word_texts.append(data['text'])
+                         word_node_ids.append(node)
+
+               if sentences_data:
+                    sentence_texts = [text for _, text, _ in sentences_data]
+                    # Encode sentences using SentenceTransformer (handles batching and device)
+                    with torch.no_grad():
+                         sent_embeddings = sentBERT_model.encode(
+                         sentence_texts,
+                         convert_to_tensor=True,
+                         normalize_embeddings=True, # As per original code
+                         batch_size=sentence_batch_size,
+                         show_progress_bar=False # Reduce console noise
+                         ) # Output is on the device specified for sentBERT_model
+
+                    # Combine SBERT embedding (384) + Positional (768)
+                    # Pad SBERT to match positional embedding dimension (768)
+                    sbert_dim = sent_embeddings.shape[1]
+                    target_dim = bert_abs_model.config.hidden_size # Should be 768 for base
+                    
+                    if sbert_dim < target_dim:
+                         padding_size = target_dim - sbert_dim
+                         padding = torch.zeros(sent_embeddings.shape[0], padding_size, device=sent_embeddings.device)
+                         padded_sent_emb = torch.cat([sent_embeddings, padding], dim=1)
+                    elif sbert_dim == target_dim:
+                         padded_sent_emb = sent_embeddings
+                    else:
+                         # This case shouldn't happen with MiniLM (384) and BERT base (768)
+                         # If models change, may need adjustment (e.g., truncation or projection)
+                         print(f"Warning: SBERT dim ({sbert_dim}) > Target dim ({target_dim}). Using SBERT embedding directly.")
+                         padded_sent_emb = sent_embeddings # Or handle differently
+
+                    # Assign combined embeddings
+                    for idx, (node_id, _, pos_embedding) in enumerate(sentences_data):
+                         # Ensure both tensors are on the same device before adding
+                         graph.nodes[node_id]['embedding'] = pos_embedding.to(padded_sent_emb.device) + padded_sent_emb[idx]
+
+               # --- Word Embedding (Batched - **IMPROVEMENT**) ---
+               if word_node_ids:
+                    all_word_embeddings = [] # Store embeddings in order
+
+                    with torch.no_grad():
+                         for j in range(0, len(word_texts), word_batch_size):
+                              batch_texts = word_texts[j : j + word_batch_size]
+                              
+                              # Tokenize batch
+                              word_tokens = bert_tokenizer(
+                                   batch_texts,
+                                   return_tensors='pt',
+                                   padding=True,       # Pad sequences to max length in batch
+                                   truncation=True,    # Truncate if longer than model max length
+                                   max_length=bert_model.config.max_position_embeddings # Use model's max length
+                              ).to(device) # Move tokens to GPU
+
+                              # Get token embeddings from BERT
+                              token_embeddings = bert_model(**word_tokens).last_hidden_state # (batch_size, num_tokens, 768)
+
+                              # Calculate mean embedding, masking padding tokens
+                              input_mask_expanded = word_tokens['attention_mask'].unsqueeze(-1).expand(token_embeddings.size()).float()
+                              sum_embeddings = torch.sum(token_embeddings * input_mask_expanded, 1)
+                              # Clamp sum_mask to avoid division by zero for empty sequences (shouldn't happen with tokenizer)
+                              sum_mask = torch.clamp(input_mask_expanded.sum(1), min=1e-9)
+                              mean_batch_embeddings = sum_embeddings / sum_mask # (batch_size, 768)
+                              all_word_embeddings.append(mean_batch_embeddings)
+
+                    # Concatenate embeddings from all batches
+                    if all_word_embeddings:
+                         final_word_embeddings = torch.cat(all_word_embeddings, dim=0)
+                         # Assign embeddings back to the graph nodes
+                         for idx, node_id in enumerate(word_node_ids):
+                              graph.nodes[node_id]['embedding'] = final_word_embeddings[idx] # Keep on GPU
+
+               embedded_graphs.append(graph)
+               print(f"Graph {i+1} embedded in {time.time() - start_graph_time:.2f}s")
+
+     # Models are automatically cleaned up by the context manager exiting
+     return embedded_graphs # Return graphs with embeddings (still on GPU)
+
+
+# --- Parallel Graph Conversion (Worker Function) ---
+
+def parallel_convert_graph(nx_graph):
+     """
+     Worker function for multiprocessing: Converts a single NetworkX graph
+     (with CPU embeddings) to a PyTorch Geometric HeteroData object (on CPU).
+     Also generates necessary mappings.
+     """
+     het_graph = HeteroData()
+     node_map = {} # Maps old nx node id -> ('type', new_pyg_id)
+
+     # --- 1. Process Nodes ---
+     sent_id = 0
+     word_id = 0
+     word_nodes_feat = []
+     word_texts = []
+     sent_nodes_feat = []
+     sent_texts = []
+     nx_id_to_text = {} # Store text temporarily for mapping later
+
+     for node, data in nx_graph.nodes(data=True):
+          cur_type = data['type']
+          # Ensure embedding is on CPU (should be already if passed correctly)
+          embed = data.get('embedding', None) # Use .get for safety
+          if embed is not None:
+               embed = embed.cpu() 
+          else:
+               # Handle nodes without embeddings if necessary (e.g., skip or use zeros)
+               print(f"Warning: Node {node} of type {cur_type} has no 'embedding' attribute.")
+               # Decide handling: continue, use zeros, raise error? Let's skip feature for now.
+               pass # Feature list append will be skipped
+
+          text = data['text']
+          nx_id_to_text[node] = text # Store original text info
+
+          if cur_type == 'word':
+               if embed is not None: word_nodes_feat.append(embed)
+               word_texts.append(str(text)) # Ensure text is string
+               node_map[node] = ('word', word_id)
+               word_id += 1
+          elif cur_type == 'sentence':
+               if embed is not None: sent_nodes_feat.append(embed)
+               sent_texts.append(str(text[2])) # Extract sentence string
+               node_map[node] = ('sentence', sent_id)
+               sent_id += 1
+
+     # Assign node features and text to HeteroData
+     if word_id > 0 and word_nodes_feat: # Check if lists are non-empty
+          het_graph['word'].x = torch.stack(word_nodes_feat) # Should be CPU tensors
+     het_graph['word'].text = word_texts
+
+     if sent_id > 0 and sent_nodes_feat: # Check if lists are non-empty
+          het_graph['sentence'].x = torch.stack(sent_nodes_feat) # Should be CPU tensors
+     het_graph['sentence'].text = sent_texts
+
+     # --- 2. Process Edges ---
+     similarity_edge_indices = []
+     similarity_edge_attrs = []
+     pro_ant_edge_indices = []
+     pro_ant_edge_attrs = []
+     sent_word_edge_indices = []
+     sent_word_edge_attrs = []
+     word_sent_edge_indices = []
+     word_sent_edge_attrs = []
+     for from_node, to_node, k, attr in nx_graph.edges(keys=True, data=True):
+          node_type_from, new_id_from = node_map[from_node]
+          node_type_to, new_id_to = node_map[to_node]
+          edge_tp = attr['edge_type']
+          weight = attr['weight']
+          if edge_tp == 'word_sent':
+               if node_type_from == 'sentence':
+                    sent_word_edge_indices.append([new_id_from, new_id_to])
+                    sent_word_edge_attrs.append([weight])
+               else:
+                    word_sent_edge_indices.append([new_id_from, new_id_to])
+                    word_sent_edge_attrs.append([weight])
+          elif edge_tp == 'pronoun_antecedent':
+               pro_ant_edge_indices.append([new_id_from, new_id_to])
+               pro_ant_edge_attrs.append([weight])
+          elif edge_tp == 'similarity':
+               similarity_edge_indices.append([new_id_from, new_id_to])
+               similarity_edge_attrs.append([weight])
+     
+     het_graph['sentence', 'similarity', 'sentence'].edge_index = torch.tensor(similarity_edge_indices).t().to(torch.int64)
+     het_graph['sentence', 'similarity', 'sentence'].edge_attr = torch.tensor(similarity_edge_attrs)
+     het_graph['sentence', 'pro_ant', 'sentence'].edge_index = torch.tensor(pro_ant_edge_indices).t().to(torch.int64)
+     het_graph['sentence', 'pro_ant', 'sentence'].edge_attr = torch.tensor(pro_ant_edge_attrs)
+     het_graph['sentence', 'has', 'word'].edge_index = torch.tensor(sent_word_edge_indices).t().to(torch.int64)
+     het_graph['sentence', 'has', 'word'].edge_attr = torch.tensor(sent_word_edge_attrs)
+     het_graph['word', 'in', 'sentence'].edge_index = torch.tensor(word_sent_edge_indices).t().to(torch.int64)
+     het_graph['word', 'in', 'sentence'].edge_attr = torch.tensor(sent_word_edge_attrs)
+     
+     # --- 3. Generate Mappings ---
+     # Mapping from new pyg sentence id -> sentence text
+     pyg_id_to_sent_txt_map = {}
+     for old_node in nx_graph.nodes():
+          attributes = nx_graph.nodes[old_node]
+          if not attributes['type'] == 'sentence': continue
+          
+          sent_txt = attributes['text'][2] ## only sentence text needed
+          new_node_type, new_node_id = node_map[old_node]
+          pyg_id_to_sent_txt_map[new_node_id] = sent_txt
+     
+     # Return the PyG graph (on CPU) and the necessary mappings
+     return het_graph, pyg_id_to_sent_txt_map
+
+# --- Main Orchestration Function (Improved) ---
+
+def create_embed_graphs(docs_list, sent_similarity=0.6):
+     """
+     Main function to create and embed graphs from a list of documents.
+     Uses checkpointing, parallel graph creation/conversion, and batched embedding.
+     """
+     # Assume DataCheckpointManager is initialized correctly
+     data_cpt = DataCheckpointManager() # Replace with your actual initialization
+     
+     if (latest_step := data_cpt.get_latest_step()):
+          print(f"Resume from step: [{latest_step}]")
+     else:
+          print("Starting from scratch.")
+
+     # Define step keys (assuming StepKey enum exists)
+     define_node_key = data_cpt.StepKey.PREDEFINE.value
+     graph_create_key = data_cpt.StepKey.GRAPH.value
+     embed_graph_key = data_cpt.StepKey.EMBED.value
+
+     # --- Step 1: Define Nodes and Edges ---
+     # Assumes define_node_edge_opt_parallel exists and returns lists of dicts/maps
+     word_nodeId_list, sent_nodeId_list, edge_data_list, sentid_node_map_list = None, None, None, None
+
+     if not latest_step or latest_step in [define_node_key]:
+          if not latest_step:
+               print("Step 1: Defining nodes and edges...")
+               start_time = time.time()
+               # This function is assumed to be provided and potentially parallel itself
+               # Ensure its outputs are picklable if it uses multiprocessing internally
+               word_nodeId_list, sent_nodeId_list, edge_data_list, sentid_node_map_list = \
+                    define_node_edge_opt_parallel(docs_list, sent_similarity)
+               
+               data_cpt.save_step(define_node_key, {
+                    'word_nodeId_list': word_nodeId_list,
+                    'sent_nodeId_list': sent_nodeId_list,
+                    'edge_data_list': edge_data_list,
+                    'sentid_node_map_list': sentid_node_map_list
+               })
+               print(f"Step 1 finished in {time.time() - start_time:.2f}s")
+          else: # Resuming from this step, load data
+               print("Loading data from Step 1 checkpoint...")
+               data = data_cpt.load_step(define_node_key)
+               word_nodeId_list = data['word_nodeId_list']
+               sent_nodeId_list = data['sent_nodeId_list']
+               edge_data_list = data['edge_data_list']
+               sentid_node_map_list = data['sentid_node_map_list']
+
+     # --- Step 2: Create NetworkX Graphs (Parallel) ---
+     if not latest_step or latest_step in [define_node_key, graph_create_key]:
+          if not latest_step or latest_step != graph_create_key: # Run if starting or finished step 1
+               print("Step 2: Creating NetworkX graphs in parallel (order preserved)...")
+               start_time = time.time()
+               num_items = len(word_nodeId_list)
+               num_workers = auto_workers()
+               pool_args = list(zip(word_nodeId_list, sent_nodeId_list, edge_data_list))
+
+               if num_items > 0:
+                    with multiprocessing.get_context("spawn").Pool(num_workers) as pool:
+                         graph_list = list(tqdm.tqdm(pool.imap(parallel_create_graph, pool_args), total=num_items, desc="Creating NX Graphs"))
+               else:
+                    graph_list = []
+                    
+               data_cpt.save_step(graph_create_key, {'graph_list': graph_list})
+               print(f"Step 2 finished in {time.time() - start_time:.2f}s")
+          else: # Resuming from this step (latest_step == graph_create_key), load data
+               print("Loading data from Step 2 checkpoint...")
+               data = data_cpt.load_step(graph_create_key)
+               graph_list = data['graph_list']
+               # Also load sentid_node_map_list from step 1 needed for embedding
+               print("Loading associated data from Step 1 checkpoint...")
+               define_data = data_cpt.load_step(define_node_key)
+               sentid_node_map_list = define_data['sentid_node_map_list']
+
+     # --- Step 3: Embed Graph Nodes (Batched, on GPU) ---
+     embedded_graph_list = None # This will hold graphs with CPU embeddings for saving/conversion
+     if not latest_step or latest_step in [define_node_key, graph_create_key, embed_graph_key]:
+          if not latest_step or latest_step != embed_graph_key: # Run if starting or finished step 1 or 2
+               print("Step 3: Embedding graph nodes (using GPU if available)...")
+               start_time = time.time()
+               # Embed nodes - function returns graphs with embeddings on GPU
+               embedded_graphs_gpu = embed_nodes_gpu(graph_list, sentid_node_map_list)
+
+               ## transfers to cpu
+               print("  Moving embeddings to CPU for checkpointing/conversion...")
+               embedded_graph_list = [] # This will store graphs with CPU embeddings
+               for g in embedded_graphs_gpu:
+                    # Create a deep copy if you need to preserve the GPU version,
+                    # otherwise modify in place for efficiency. Let's modify in place.
+                    for node in g.nodes():
+                         if 'embedding' in g.nodes[node] and hasattr(g.nodes[node]['embedding'], 'cpu'):
+                              g.nodes[node]['embedding'] = g.nodes[node]['embedding'].cpu()
+                    embedded_graph_list.append(g) # Now g has CPU embeddings
+
+               del embedded_graphs_gpu
+               clean_memory() # Assuming clean_memory calls empty_cache etc.
+               
+               data_cpt.save_step(embed_graph_key, { 'embedded_graph_list': embedded_graph_list})
+               print(f"Step 3 finished in {time.time() - start_time:.2f}s")
+          else: # Resuming from this step (latest_step == embed_graph_key), load data
+               print("Loading data from Step 3 checkpoint...")
+               data = data_cpt.load_step(embed_graph_key)
+               embedded_graph_list = data['embedded_graph_list']
+
+     # --- Step 4: Convert to PyG HeteroData (Parallel) ---
+     print("Step 4: Converting graphs to PyG format in parallel (order preserved)...")
+     start_time = time.time()
+     pyg_graph_list_cpu = []
+     node_sent_map_list = [] # This will store pyg_id -> sent_text maps
+
+     num_items = len(embedded_graph_list)
+     # Determine workers
+     num_workers = auto_workers()
+     print(f"Using {num_workers} workers for conversion.")
+
+     if num_items > 0:
+          # Use multiprocessing Pool with imap for ordered results
+          # Ensure embedded_graph_list has graphs with CPU tensors here
+          with multiprocessing.get_context("spawn").Pool(num_workers) as pool:
+               # Assuming parallel_convert_graph returns (het_graph, pyg_id_to_sent_txt_map)
+               results = list(tqdm.tqdm(pool.imap(parallel_convert_graph, embedded_graph_list), total=num_items, desc="Converting to PyG"))
+
+          # Unzip results - order is maintained by list() and imap
+          pyg_graph_list_cpu = [res[0] for res in results]
+          node_sent_map_list = [res[1] for res in results]
+     else:
+          pyg_graph_list_cpu = []
+          node_sent_map_list = []
+     print(f"Step 4 finished in {time.time() - start_time:.2f}s")
+     
+     return pyg_graph_list_cpu, node_sent_map_list
