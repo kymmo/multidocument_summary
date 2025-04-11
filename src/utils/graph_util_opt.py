@@ -486,6 +486,10 @@ def create_embed_graphs(docs_list, sent_similarity=0.6):
                print("Loading data from Step 3 checkpoint...")
                data = data_cpt.load_step(embed_graph_key)
                embedded_graph_list = data['embedded_graph_list']
+               for g in embedded_graph_list:
+                    for node, data in g.nodes(data=True):
+                         if 'embedding' in data and isinstance(data['embedding'], torch.Tensor) and data['embedding'].requires_grad:
+                              data['embedding'] = data['embedding'].detach()
 
      # --- Step 4: Convert to PyG HeteroData (Parallel) ---
      print("Step 4: Converting graphs to PyG format in parallel (order preserved)...")
