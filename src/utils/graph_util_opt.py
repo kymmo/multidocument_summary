@@ -180,13 +180,10 @@ def embed_nodes_gpu(graphs, sentid_node_map_list, word_batch_size=64, sentence_b
           sentBERT_model = models["sent_bert"] # SentenceTransformer handles eval mode internally
 
           # Pre-calculate all positional embeddings first
-          start_time = time.time()
           sent_node_embedding_map_list = get_sent_pos_encoding(sentid_node_map_list, bert_abs_model, bert_relative_model)
-          print(f"Positional embeddings calculated in {time.time() - start_time:.2f}s")
 
           # Process each graph
           for i, graph in enumerate(graphs):
-               start_graph_time = time.time()
                sent_node_embedding_map = sent_node_embedding_map_list[i]
 
                # --- Sentence Embedding (Batched) ---
@@ -276,9 +273,7 @@ def embed_nodes_gpu(graphs, sentid_node_map_list, word_batch_size=64, sentence_b
                               graph.nodes[node_id]['embedding'] = final_word_embeddings[idx] # Keep on GPU
 
                embedded_graphs.append(graph)
-               print(f"Graph {i+1} embedded in {time.time() - start_graph_time:.2f}s")
 
-     # Models are automatically cleaned up by the context manager exiting
      return embedded_graphs # Return graphs with embeddings (still on GPU)
 
 
@@ -477,13 +472,13 @@ def create_embed_graphs(docs_list, sent_similarity=0.6):
                for g in embedded_graphs_gpu:
                     # Create a deep copy if you need to preserve the GPU version,
                     # otherwise modify in place for efficiency. Let's modify in place.
-                    for node in g.nodes():
-                         if 'embedding' in g.nodes[node] and hasattr(g.nodes[node]['embedding'], 'cpu'):
-                              g.nodes[node]['embedding'] = g.nodes[node]['embedding'].cpu()
-                    embedded_graph_list.append(g) # Now g has CPU embeddings
+                    for node, data in g.nodes(data=True):
+                         if 'embedding' in data and isinstance(data['embedding'], torch.Tensor):
+                              data['embedding'] = data['embedding'].detach().cpu()
+                    embedded_graph_list.append(g)
 
                del embedded_graphs_gpu
-               clean_memory() # Assuming clean_memory calls empty_cache etc.
+               clean_memory()
                
                data_cpt.save_step(embed_graph_key, { 'embedded_graph_list': embedded_graph_list})
                print(f"Step 3 finished in {time.time() - start_time:.2f}s")
