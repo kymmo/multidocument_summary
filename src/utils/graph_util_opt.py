@@ -66,48 +66,78 @@ def load_bert_models(models_info, target_device):
           print("Model cleanup complete.")
 
 def get_sent_pos_encoding(sentid_node_map_list, bert_abs_model, bert_relative_model):
+     """
+     Calculates combined absolute (document) and relative (sentence)
+     positional embeddings for sentence nodes. Optimized version.
+     """
      sent_pos_emb_list = []
-     
+     target_device = bert_abs_model.device # Get device from model
+
      for sentid_node_map in sentid_node_map_list:
           sent_node_emb_map = {}
-          doc_sentinel = -1
-          doc_size = 1 + next(reversed(sentid_node_map.items()))[0][1] ## the second key is doc_id
-          # doc absolute position embedding
-          doc_input_ids = [i for i in range(doc_size)]
-          doc_pos_embeddings = bert_abs_model.embeddings.position_embeddings(torch.tensor(doc_input_ids).to(device))
-          sent_pos_embeddings = []
+          if not sentid_node_map:
+               sent_pos_emb_list.append(sent_node_emb_map)
+               continue
 
-          for (training_id, doc_id, sent_id), node_id in reversed(sentid_node_map.items()):
-               if(doc_id == doc_sentinel):
-                    node_embedding = doc_pos_embeddings[doc_id] + sent_pos_embeddings[sent_id]
-                    sent_node_emb_map[node_id] = node_embedding
-                    continue
-               
-               doc_sentinel = doc_id
+          # --- Group nodes by doc_id first ---
+          nodes_by_doc = {}
+          max_doc_id = -1
+          for key, node_id in sentid_node_map.items():
+               training_id, doc_id, sent_id = key
+               if doc_id not in nodes_by_doc:
+                    nodes_by_doc[doc_id] = []
+               nodes_by_doc[doc_id].append({'sent_id': sent_id, 'node_id': node_id})
+               max_doc_id = max(max_doc_id, doc_id) # Find max doc_id efficiently
 
-               # sentence relative position embedding
-               # sent_input_ids = [i for i in range(sent_id + 1)]
+          if max_doc_id == -1: # Handle case where map had items but no valid doc_ids?
+               sent_pos_emb_list.append(sent_node_emb_map)
+               continue
+
+          doc_size = 1 + max_doc_id
+
+          # --- Calculate absolute doc embeddings ---
+          with torch.no_grad():
+               doc_input_ids = torch.arange(doc_size, device=target_device)
+               doc_pos_embeddings = bert_abs_model.embeddings.position_embeddings(doc_input_ids)
+
+          # --- Calculate relative embeddings ONCE per document ---
+          relative_embeddings_cache = {} 
+          for doc_id, nodes in nodes_by_doc.items():
+               # Calculate relative embeddings for this doc if not cached (it won't be)
+               max_sent_id = max(n['sent_id'] for n in nodes)
+               sent_size = max_sent_id + 1
                sent_pos_embeddings = []
-               embedding_size = 512
-               sent_size = sent_id + 1
-               overlap = 5
+               embedding_size = 512 # From original code
+               overlap = 5         # From original code
                i = 0
-               while i < sent_size: ## in case the sent number exceeds the embedding size:512
-                    start_pos = max(0, i - overlap)
-                    end_pos = min(sent_size, start_pos + embedding_size)
-                    # batch = sent_input_ids[start_pos:end_pos]
-                    batch = [j for j in range((end_pos - start_pos))]
-                    
-                    batch_emb = bert_relative_model.embeddings.position_embeddings(torch.tensor(batch).to(device))
-                    next_id = 0 if start_pos == 0 else overlap
-                    sent_pos_embeddings.extend(batch_emb[next_id:]) ## simplely cut
-                    i = end_pos
-                    
-               node_embedding = doc_pos_embeddings[doc_id] + sent_pos_embeddings[sent_id]
-               sent_node_emb_map[node_id] = node_embedding
+               with torch.no_grad():
+                    while i < sent_size:
+                         start_pos = max(0, i - overlap)
+                         end_pos = min(sent_size, start_pos + embedding_size)
+                         batch_indices = torch.arange(end_pos - start_pos, device=target_device)
+
+                         batch_emb = bert_relative_model.embeddings.position_embeddings(batch_indices)
+
+                         actual_overlap = min(overlap, batch_emb.size(0)) 
+                         next_id_idx = 0 if start_pos == 0 else actual_overlap
+
+                         sent_pos_embeddings.extend(batch_emb[next_id_idx:])
+                         i = end_pos
+               # Trim and store in cache
+               relative_embeddings_cache[doc_id] = torch.stack(sent_pos_embeddings[:sent_size])
+
+               # --- Assign combined embeddings for nodes in this doc ---
+               doc_abs_emb = doc_pos_embeddings[doc_id]
+               doc_rel_embs = relative_embeddings_cache[doc_id]
+               for node_info in nodes:
+                    sent_id = node_info['sent_id']
+                    node_id = node_info['node_id']
+                    # Combine abs (doc) + rel (sent)
+                    node_embedding = doc_abs_emb + doc_rel_embs[sent_id]
+                    sent_node_emb_map[node_id] = node_embedding # Keep on model's device
 
           sent_pos_emb_list.append(sent_node_emb_map)
-     
+
      return sent_pos_emb_list
 
 
