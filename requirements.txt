@@ -58,6 +58,8 @@ dill==0.3.7
     # via
     #   datasets
     #   multiprocess
+faiss-cpu==1.10.0
+    # via -r requirements.in
 filelock==3.16.1
     # via
     #   huggingface-hub
@@ -140,6 +142,7 @@ numpy==1.26.4
     #   blis
     #   contourpy
     #   datasets
+    #   faiss-cpu
     #   keybert
     #   matplotlib
     #   pandas
@@ -153,6 +156,7 @@ numpy==1.26.4
 packaging==24.2
     # via
     #   datasets
+    #   faiss-cpu
     #   huggingface-hub
     #   matplotlib
     #   spacy

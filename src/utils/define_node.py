@@ -13,6 +13,9 @@ import torch.nn.functional as F
 import spacy
 from sentence_transformers import SentenceTransformer
 import psutil
+import faiss
+import traceback
+import numpy as np
 
 from utils.model_utils import clean_memory, print_cpu_memory, print_gpu_memory, auto_workers
 
@@ -217,7 +220,7 @@ def process_batch(batch_input):
                     sample_token_node_map_by_doc[(original_training_idx, doc_idx_in_sample)] = doc_token_to_sample_node_list
 
                     # 1. Similarity Edges
-                    similarity_edges = compute_edges_similarity(doc_sent_texts, edge_similarity_threshold)
+                    similarity_edges = compute_edges_similarity_ann(doc_sent_texts, edge_similarity_threshold)
                     if similarity_edges is None:
                          print(f"[WARN] No similarity edges found for document (orig={original_training_idx}, doc={doc_idx_in_sample}).")
                          continue
@@ -404,6 +407,99 @@ def extract_keywords_internal(docs_text, words_per_100=1, min_keywords=2, max_ke
           final_keywords.append(doc_raw_keywords[:specific_n])
 
      return final_keywords
+
+def compute_edges_similarity_ann(sentence_texts, edge_threshold):
+     """
+     Computes similarity edges using FAISS ANN range search.
+     Encodes input sentence texts internally.
+     Automatically attempts to use GPU if faiss-gpu is installed and CUDA is available.
+
+     Args:
+          sentence_texts (list[str]): A list of sentence texts for ONE document.
+          edge_threshold (float): The minimum cosine similarity threshold.
+
+     Returns:
+          list[tuple[int, int, float]]: List of edges (sent_idx1, sent_idx2, similarity).
+                                        Indices are relative to the input sentence_texts list.
+     """
+     global _subprocess_st_model
+     
+     if not sentence_texts or len(sentence_texts) < 2:
+          return []
+
+     embeddings_tensor = None
+     try:
+          with torch.inference_mode():
+               embeddings_tensor = _subprocess_st_model.encode(
+                    sentence_texts,
+                    convert_to_tensor=True,
+                    device=device,
+                    show_progress_bar=False,
+                    batch_size=256
+               )
+               # Normalize embeddings for cosine similarity
+               embeddings_tensor = F.normalize(embeddings_tensor, p=2, dim=1)
+     except Exception as e:
+          print(f"[ERROR][Worker {os.getpid()}] Sentence encoding failed in compute_edges_similarity_ann: {e}")
+          traceback.print_exc()
+          return []
+
+     if embeddings_tensor is None or embeddings_tensor.shape[0] < 2:
+          return []
+
+     # Prepare for FAISS (ensure float32 contiguous numpy array on CPU)
+     embeddings_np = np.ascontiguousarray(embeddings_tensor.cpu().numpy().astype('float32'))
+     n_sents, dim = embeddings_np.shape
+
+     index = faiss.IndexFlatIP(dim) # Start with CPU index
+     res = None # GPU resources handle
+     using_gpu = False
+
+     if device.type == 'cuda':
+          try:
+               res = faiss.StandardGpuResources()
+               index = faiss.index_cpu_to_gpu(res, device.index or 0, index)
+               using_gpu = True
+          except AttributeError:
+               print(f"[Worker {os.getpid()}] faiss-gpu not available. Using CPU.") # Optional: reduce logging
+               pass
+          except Exception as e:
+               print(f"[Worker {os.getpid()}] Error initializing FAISS GPU index: {e}. Using CPU.")
+               if index and hasattr(index, 'ntotal') and index.ntotal > 0:
+                    index = faiss.index_gpu_to_cpu(index)
+               res = None
+               using_gpu = False
+
+     edges = []
+     try:
+          # Add vectors to the index
+          index.add(embeddings_np)
+
+          # Perform range search
+          lims, D, I = index.range_search(embeddings_np, thresh=edge_threshold) # Pass numpy array
+
+          # Process results
+          for i in range(n_sents):
+               start_idx, end_idx = lims[i], lims[i+1]
+               for k in range(start_idx, end_idx):
+                    j, sim = I[k], D[k]
+                    if i < j:
+                         edges.append((i, j, float(sim)))
+
+     except Exception as e:
+          print(f"[ERROR][Worker {os.getpid()}] FAISS range_search failed: {e}")
+          traceback.print_exc()
+          return []
+     finally:
+          if using_gpu and res is not None:
+               try:
+                    del index
+                    del res
+               except Exception as e:
+                    print(f"[WARN] Error cleaning up FAISS GPU resources: {e}")
+
+     return edges
+
 
 def define_node_edge_opt_parallel(documents_list, edge_similarity_threshold=0.6):
      """
