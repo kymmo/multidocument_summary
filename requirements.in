@@ -10,5 +10,4 @@ sentencepiece
 datasets
 protobuf
 psutil
-faiss-cpu
 faiss-gpu
