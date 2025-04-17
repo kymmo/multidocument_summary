@@ -15,6 +15,7 @@ from sentence_transformers import SentenceTransformer
 import faiss
 import traceback
 import numpy as np
+import tqdm
 
 from utils.model_utils import clean_memory, print_cpu_memory, print_gpu_memory, auto_workers
 
@@ -479,7 +480,7 @@ def compute_edges_similarity_ann(sentence_texts, abs_threshold):
           # Use index.search to get neighbors and their similarities (IP = CosSim here)
           # Search for all possible neighbors (k=n_sents) to check all pairs.
           k = n_sents
-          batch_size_search = 128
+          batch_size_search = 256
           D_list = []
           I_list = []
 
@@ -580,7 +581,12 @@ def define_node_edge_opt_parallel(documents_list, edge_similarity_threshold=0.6)
      ) as executor:
           futures = [executor.submit(process_batch, task_batch) for task_batch in tasks]
 
-          for future in concurrent.futures.as_completed(futures):
+          # for future in concurrent.futures.as_completed(futures):
+          for future in tqdm(
+               concurrent.futures.as_completed(futures),
+               total=len(futures),
+               desc="Batch Preprocessing"
+          ):
                try:
                     batch_result = future.result()
                     if batch_result is not None:
@@ -627,7 +633,7 @@ def define_node_edge_opt_parallel(documents_list, edge_similarity_threshold=0.6)
 
 def monitor_usage(interval, stop_event):
      """Monitors CPU and memory usage."""
-     while not stop_event.wait(interval * 60):
+     while not stop_event.wait(10 * 60): ## every 10 mins
           label = "processing sample"
           print_cpu_memory(label, interval)
           print_gpu_memory(label)
