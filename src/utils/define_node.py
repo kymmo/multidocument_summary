@@ -431,7 +431,7 @@ def compute_edges_similarity_ann(sentence_texts, abs_threshold):
                     convert_to_tensor=True,
                     device=device,
                     show_progress_bar=False,
-                    batch_size=256
+                    batch_size=128
                )
                
                embeddings_tensor = F.normalize(embeddings_tensor, p=2, dim=1)
@@ -447,6 +447,9 @@ def compute_edges_similarity_ann(sentence_texts, abs_threshold):
      # --- 2. Prepare for FAISS ---
      embeddings_np = np.ascontiguousarray(embeddings_tensor.cpu().numpy().astype('float32'))
      n_sents, dim = embeddings_np.shape
+     
+     del embeddings_tensor
+     clean_memory()
 
      # --- 3. Create FAISS Index (Using Inner Product) ---
      index = faiss.IndexFlatIP(dim)
@@ -476,7 +479,19 @@ def compute_edges_similarity_ann(sentence_texts, abs_threshold):
           # Use index.search to get neighbors and their similarities (IP = CosSim here)
           # Search for all possible neighbors (k=n_sents) to check all pairs.
           k = n_sents
-          D, I = index.search(embeddings_np, k=k)
+          batch_size_search = 128
+          D_list = []
+          I_list = []
+
+          for i_start in range(0, n_sents, batch_size_search):
+               i_end = min(i_start + batch_size_search, n_sents)
+               batch_query = embeddings_np[i_start:i_end]
+               D_batch, I_batch = index.search(batch_query, k=k)
+               D_list.append(D_batch)
+               I_list.append(I_batch)
+
+          D = np.vstack(D_list)
+          I = np.vstack(I_list)
           # D contains cosine similarities (scores)
           # I contains the indices of the neighbors
 
