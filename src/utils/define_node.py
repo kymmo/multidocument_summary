@@ -15,7 +15,8 @@ from sentence_transformers import SentenceTransformer
 import faiss
 import traceback
 import numpy as np
-import tqdm
+from tqdm import tqdm
+
 
 from utils.model_utils import clean_memory, print_cpu_memory, print_gpu_memory, auto_workers
 
@@ -25,7 +26,7 @@ os.environ["TOKENIZERS_PARALLELISM"] = "false"
 NLP_MODEL_NAME = "en_core_web_lg"
 SENT_MODEL_NAME = "all-MiniLM-L6-v2"
 WORKER_NLP_BATCH_SIZE = 30 # for spacy docs process
-WORKER_TASK_BATCH_SIZE = 6 # for each subprocess
+WORKER_TASK_BATCH_SIZE = 10 # for each subprocess
 
 # These will hold the models loaded *within each subprocess*
 _subprocess_coref_nlp = None
@@ -480,7 +481,7 @@ def compute_edges_similarity_ann(sentence_texts, abs_threshold):
           # Use index.search to get neighbors and their similarities (IP = CosSim here)
           # Search for all possible neighbors (k=n_sents) to check all pairs.
           k = n_sents
-          batch_size_search = 256
+          batch_size_search = 128
           D_list = []
           I_list = []
 
@@ -585,7 +586,7 @@ def define_node_edge_opt_parallel(documents_list, edge_similarity_threshold=0.6)
           for future in tqdm(
                concurrent.futures.as_completed(futures),
                total=len(futures),
-               desc="Batch Preprocessing"
+               desc="Graph Node-Edge Processing"
           ):
                try:
                     batch_result = future.result()

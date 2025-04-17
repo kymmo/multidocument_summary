@@ -6,7 +6,7 @@ from torch_geometric.data import HeteroData
 from contextlib import contextmanager
 import concurrent.futures
 import multiprocessing
-import tqdm
+from tqdm import tqdm
 import time
 
 from models.CheckPointManager import DataCheckpointManager
@@ -441,7 +441,7 @@ def create_embed_graphs(docs_list, sent_similarity=0.6):
 
                if num_items > 0:
                     with multiprocessing.get_context("spawn").Pool(num_workers) as pool:
-                         graph_list = list(tqdm.tqdm(pool.imap(parallel_create_graph, pool_args), total=num_items, desc="Creating NX Graphs"))
+                         graph_list = list(tqdm(pool.imap(parallel_create_graph, pool_args), total=num_items, desc="Creating NX Graphs"))
                else:
                     graph_list = []
                     
@@ -500,7 +500,7 @@ def create_embed_graphs(docs_list, sent_similarity=0.6):
      if num_items > 0:
           # Use multiprocessing Pool with imap for ordered results
           with multiprocessing.get_context("spawn").Pool(num_workers) as pool:
-               results = list(tqdm.tqdm(pool.imap(parallel_convert_graph, embedded_graph_list), total=num_items, desc="Converting to PyG"))
+               results = list(tqdm(pool.imap(parallel_convert_graph, embedded_graph_list), total=num_items, desc="Converting to PyG"))
 
           # Unzip results - order is maintained by list() and imap
           pyg_graph_list_cpu = [res[0] for res in results]
