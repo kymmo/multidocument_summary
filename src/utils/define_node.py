@@ -26,7 +26,6 @@ SENT_MODEL_NAME = "all-MiniLM-L6-v2"
 WORKER_NLP_BATCH_SIZE = 30 # for spacy docs process
 WORKER_TASK_BATCH_SIZE = 6 # for each subprocess
 
-# --- Global Models (for subprocess initialization) ---
 # These will hold the models loaded *within each subprocess*
 _subprocess_coref_nlp = None
 _subprocess_st_model = None
@@ -421,23 +420,20 @@ def compute_edges_similarity_ann(sentence_texts, abs_threshold):
 
      if not sentence_texts or len(sentence_texts) < 2:
           return []
-     # Ensure threshold is non-negative for clarity, although abs() handles it later
      abs_threshold = abs(abs_threshold)
 
      # --- 1. Encode Sentences & Normalize ---
      embeddings_tensor = None
      try:
           with torch.inference_mode():
-               # Encode all sentences at once if model/memory allows, or use batching if needed
                embeddings_tensor = _subprocess_st_model.encode(
                     sentence_texts,
                     convert_to_tensor=True,
                     device=device,
-                    show_progress_bar=False, # Keep False for subprocesses
-                    # Consider adjusting batch_size based on VRAM if n_sents is huge
+                    show_progress_bar=False,
                     batch_size=256
                )
-               # Normalize embeddings (required for IP search to equal Cosine Similarity)
+               
                embeddings_tensor = F.normalize(embeddings_tensor, p=2, dim=1)
      except Exception as e:
           print(f"[ERROR][Worker {os.getpid()}] Sentence encoding failed: {e}")
@@ -453,7 +449,6 @@ def compute_edges_similarity_ann(sentence_texts, abs_threshold):
      n_sents, dim = embeddings_np.shape
 
      # --- 3. Create FAISS Index (Using Inner Product) ---
-     # Using IndexFlatIP because we work with normalized vectors and want cosine similarity
      index = faiss.IndexFlatIP(dim)
 
      res = None # GPU resources handle
@@ -465,7 +460,6 @@ def compute_edges_similarity_ann(sentence_texts, abs_threshold):
                res = faiss.StandardGpuResources()
                index = faiss.index_cpu_to_gpu(res, device.index or 0, index)
                using_gpu = True
-               # print(f"[DEBUG][Worker {os.getpid()}] FAISS index moved to GPU.") # Optional
           except AttributeError:
                print(f"[WARN][Worker {os.getpid()}] faiss-gpu components not found. Using CPU.")
                pass # Fallback to CPU index
@@ -473,19 +467,15 @@ def compute_edges_similarity_ann(sentence_texts, abs_threshold):
                print(f"[WARN][Worker {os.getpid()}] Error initializing FAISS GPU index: {e}. Using CPU.")
                res = None
                using_gpu = False
-     # --- End GPU Handling ---
 
      edges = []
      try:
-          # --- 5. Add Vectors to Index ---
           index.add(embeddings_np)
 
           # --- 6. Perform k-NN Search ---
           # Use index.search to get neighbors and their similarities (IP = CosSim here)
           # Search for all possible neighbors (k=n_sents) to check all pairs.
-          # FAISS GPU handles this brute-force search efficiently.
           k = n_sents
-          # print(f"[DEBUG][Worker {os.getpid()}] FAISS searching for k={k} neighbors...") # Optional
           D, I = index.search(embeddings_np, k=k)
           # D contains cosine similarities (scores)
           # I contains the indices of the neighbors
@@ -501,25 +491,23 @@ def compute_edges_similarity_ann(sentence_texts, abs_threshold):
                     if j == -1 or i == j:
                          continue
 
-                    # Check if the absolute similarity meets the threshold
                     if abs(sim) >= abs_threshold:
                          # Ensure we only add edge (i, j) or (j, i) once
                          pair = tuple(sorted((i, j)))
                          if pair not in added_pairs:
-                              edges.append((i, j, float(sim))) # Append tuple with original similarity
+                              edges.append((i, j, float(sim)))
                               added_pairs.add(pair)
 
      except Exception as e:
           print(f"[ERROR][Worker {os.getpid()}] FAISS search or processing failed: {e}")
           traceback.print_exc()
-          return [] # Return empty list on failure
+          return []
      finally:
           # --- 8. Cleanup GPU Resources ---
           if using_gpu and res is not None:
                try:
-                    del index # Delete index obj first
-                    del res   # Then GPU resources obj
-                    # print(f"[DEBUG][Worker {os.getpid()}] Cleaned up FAISS GPU resources.") # Optional
+                    del index
+                    del res
                except Exception as e:
                     print(f"[WARN][Worker {os.getpid()}] Error cleaning up FAISS GPU resources: {e}")
 
@@ -558,11 +546,8 @@ def define_node_edge_opt_parallel(documents_list, edge_similarity_threshold=0.6)
           if batch:
                tasks.append(batch)
 
-     prepare_time = time.time() - start_time
-     print(f"Task preparation took {prepare_time:.4f} s for {len(tasks)} task batches.")
-
      cpu_num = auto_workers()
-     print(f"Using {cpu_num} worker processes.")
+     print(f"Using {cpu_num} worker processes for node definition.")
 
      all_results_flat = [] # Store results from all workers
 
@@ -593,7 +578,7 @@ def define_node_edge_opt_parallel(documents_list, edge_similarity_threshold=0.6)
                     traceback.print_exc()
 
      processing_time = time.time() - start_processing_time
-     print(f"Parallel processing took {processing_time:.4f} s.")
+     print(f"Parallel preprocessing took {processing_time:.4f} s.")
 
      # Stop monitoring
      stop_event.set()
