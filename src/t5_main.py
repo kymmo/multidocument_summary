@@ -1,13 +1,14 @@
 import os
 from pathlib import Path
 
-from models.DatasetLoader import EvalDataset
 from models.gnn_train_t5 import train_gnn, get_gnn_trained_embedding
 from models.model_eval import get_t5_outputs2, eval_t5_summary
 from models.two_stage_train import train_gnn_t5
 from utils.model_utils import rouge_eval
 
-def model_train_eval(dataset_path, learning_rate = 0.001,num_epochs = 20, batch_size = 8):
+def model_train_eval(dataset_path, learning_rate = 0.001,num_epochs = 20, batch_size = 8, 
+                    patience = 5, sent_similarity_threshold = 0.6, 
+                    t5_learning_rates_dict = None, warmup_ratio = 0.1):
      bert_embed_size = 768
      hidden_size = bert_embed_size
      out_size = 768 # for t5-base input
@@ -22,16 +23,24 @@ def model_train_eval(dataset_path, learning_rate = 0.001,num_epochs = 20, batch_
           num_epochs=num_epochs,
           feat_drop=0.1,
           attn_drop=0.1,
-          batch_size=batch_size
+          batch_size=batch_size,
+          patience=patience,
+          sent_similarity_threshold=sent_similarity_threshold,
+          learning_rates_dict=t5_learning_rates_dict,
+          warmup_ratio=warmup_ratio,
      )
      
-     eval_data_path = os.path.join(dataset_path, "validation.jsonl")
-     scores = eval_t5_summary(eval_data_path, max_summary_length = 300)
+     eval_data_path = os.path.join(dataset_path, "test.jsonl")
+     scores = eval_t5_summary(eval_data_path, max_summary_length = 300, sent_similarity=sent_similarity_threshold)
 
      return scores
 
-
+#####################
+###    Deprecated
+#####################
 def model_train_and_eval_t5(dataset_path):
+     raise DeprecationWarning("This function is deprecated. Please use model_train_eval instead.")
+
      bert_embed_size = 768
      hidden_size = bert_embed_size
      out_size = 768 # for t5-base input
@@ -60,7 +69,7 @@ def model_train_and_eval_t5(dataset_path):
      )
      
      print(f"Start evaluation...")
-     eval_data_path = os.path.join(dataset_path, "validation.jsonl")
+     eval_data_path = os.path.join(dataset_path, "test.jsonl")
      gnn_output_embeddings, merged_node_map_list, merged_summary_list = get_gnn_trained_embedding(eval_data_path, hidden_size, out_size, num_heads,sentence_in_size = 768, word_in_size = 768, feat_drop=0.2, attn_drop=0.2, batch_size=32)
      generated_summary = get_t5_outputs2(gnn_sent_embeddings=gnn_output_embeddings, sample_node_sent_maps=merged_node_map_list)
      scores = rouge_eval(merged_summary_list, generated_summary)

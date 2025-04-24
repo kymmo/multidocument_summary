@@ -7,12 +7,15 @@ from utils.graph_utils import get_embed_graph, get_embed_graph_node_map
 
 
 class EvalDataset(Dataset):
-     def __init__(self, file_path):
+     def __init__(self, file_path, dataset_type, sent_similarity):
           self.file_path = file_path
+          self.dataset_type = dataset_type
+          self.sent_similarity = sent_similarity
           self.data, self.node_map, self.summary_list = self._load_data(file_path)
 
      def _load_data(self, file_path):
-          embedded_graphs, node_maps, summary_list = get_embed_graph_node_map(file_path) ## node_maps: sent_node_id-> sent_text
+          embedded_graphs, node_maps, summary_list = \
+          get_embed_graph_node_map(file_path=file_path, dataset_type=self.dataset_type, sent_similarity=self.sent_similarity) ## node_maps: sent_node_id-> sent_text
           
           return embedded_graphs, node_maps, summary_list
 
@@ -23,18 +26,20 @@ class EvalDataset(Dataset):
           return self.data[idx], self.node_map[idx], self.summary_list[idx]
 
 class OptimizedDataset(Dataset):
-     def __init__(self, file_path):
+     def __init__(self, file_path, dataset_type, sent_similarity):
           self.file_path = file_path
           self.data = None
           self._lock = mp.Lock()
           self._loaded = mp.Value('b', False) ## multi-process shared
+          self.dataset_type = dataset_type
+          self.sent_similarity = sent_similarity
 
      def _load_all(self):
           with self._lock:
                if self._loaded.value:
                     return
                
-               raw_data = get_embed_graph(self.file_path)
+               raw_data = get_embed_graph(self.file_path, dataset_type=self.dataset_type, sent_similarity=self.sent_similarity)
                
                self.data = []
                for het_graph in raw_data:
@@ -56,7 +61,7 @@ class OptimizedDataset(Dataset):
                     self.data.append(shared_graph)
                
                self._loaded.value = True  # marked as loaded
-
+          
      def __len__(self):
           if not self._loaded.value:
                self._load_all()  # late loader

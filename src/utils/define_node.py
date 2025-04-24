@@ -546,8 +546,8 @@ def define_node_edge_opt_parallel(documents_list, edge_similarity_threshold=0.6)
                     Aggregated results across all documents. Node IDs need careful handling.
                     Returning structure might need adjustment based on downstream use.
      """
-     start_time = time.time()
-
+     print(f"[Graph Node-Edge Define] Processing {len(documents_list)} samples...")
+     
      # --- Prepare tasks for parallel execution ---
      # Each task will be a batch of documents to process.
      tasks = []
@@ -564,7 +564,7 @@ def define_node_edge_opt_parallel(documents_list, edge_similarity_threshold=0.6)
                tasks.append(batch)
 
      cpu_num = auto_workers()
-     print(f"Using {cpu_num} worker processes for node definition.")
+     print(f"Using {cpu_num} worker processes for parallel processing.")
 
      all_results_flat = [] # Store results from all workers
 
@@ -586,7 +586,7 @@ def define_node_edge_opt_parallel(documents_list, edge_similarity_threshold=0.6)
           for future in tqdm(
                concurrent.futures.as_completed(futures),
                total=len(futures),
-               desc="Graph Node-Edge Processing"
+               desc="Graph Node-Edge Batch-Processing"
           ):
                try:
                     batch_result = future.result()
@@ -623,10 +623,6 @@ def define_node_edge_opt_parallel(documents_list, edge_similarity_threshold=0.6)
           edge_data_list.append(sample_edge_data)
           sentId_nodeId_list.append(sample_sentId_nodeId_map)
 
-     total_time = time.time() - start_time
-     print(f"Total execution time: {total_time:.4f} s.")
-     print(f"Processed {len(documents_list)} samples.")
-
      del all_results_flat, tasks, futures
      clean_memory()
 
@@ -638,5 +634,3 @@ def monitor_usage(interval, stop_event):
           label = "processing sample"
           print_cpu_memory(label, interval)
           print_gpu_memory(label)
-          
-     print("[Monitor] Monitoring stopped.")

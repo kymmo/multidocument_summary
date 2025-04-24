@@ -22,7 +22,6 @@ def load_bert_models(models_info, target_device):
      and ensure they are deleted from memory afterwards.
      """
      models = {}
-     print(f"Loading models onto {target_device}...")
      try:
           for model_type, model_name in models_info.items():
                if model_type == 'normal':
@@ -42,18 +41,14 @@ def load_bert_models(models_info, target_device):
                     models[model_type] = SentenceTransformer(model_name, device=target_device)
                else:
                     raise ValueError(f"Unsupported model type: {model_type}")
-               print(f"  Loaded {model_type}.")
           
-          print("All models loaded.")
           yield models
 
      finally:
-          print("Cleaning up loaded models...")
           for model_name, model in models.items():
                del model
           
           clean_memory()
-          print("Model cleanup complete.")
 
 def get_sent_pos_encoding(sentid_node_map_list, bert_abs_model, bert_relative_model):
      """
@@ -388,7 +383,7 @@ def parallel_convert_graph(nx_graph):
      # Return the PyG graph (on CPU) and the necessary mappings
      return het_graph, pyg_id_to_sent_txt_map
 
-def create_embed_graphs(docs_list, sent_similarity=0.6):
+def create_embed_graphs_opt(docs_list, sent_similarity=0.6):
      """
      Main function to create and embed graphs from a list of documents.
      Uses checkpointing, parallel graph creation/conversion, and batched embedding.
@@ -502,12 +497,144 @@ def create_embed_graphs(docs_list, sent_similarity=0.6):
           with multiprocessing.get_context("spawn").Pool(num_workers) as pool:
                results = list(tqdm(pool.imap(parallel_convert_graph, embedded_graph_list), total=num_items, desc="Converting to PyG"))
 
-          # Unzip results - order is maintained by list() and imap
           pyg_graph_list_cpu = [res[0] for res in results]
           node_sent_map_list = [res[1] for res in results]
      else:
           pyg_graph_list_cpu = []
           node_sent_map_list = []
      print(f"Step 4 finished in {time.time() - start_time:.2f}s")
+     
+     return pyg_graph_list_cpu, node_sent_map_list
+
+def get_embedded_pyg_graphs(dataset_type, docs_list, sent_similarity):
+     data_cpt = DataCheckpointManager()
+
+     if (latest_step := data_cpt.get_latest_step(dataset_type = dataset_type)):
+          print(f"Resume from step: [{latest_step}] for {dataset_type} dataset")
+     else:
+          print(f"Starting from scratch for {dataset_type} dataset.")
+
+     define_node_key = data_cpt.StepKey.PREDEFINE.value
+     graph_create_key = data_cpt.StepKey.GRAPH.value
+     embed_graph_key = data_cpt.StepKey.EMBED.value
+     final_graph_key = data_cpt.StepKey.FINAL.value
+
+     # --- Step 1: Define Nodes and Edges ---
+     word_nodeId_list, sent_nodeId_list, edge_data_list, sentid_node_map_list = None, None, None, None
+
+     if not latest_step or latest_step in [define_node_key]:
+          if not latest_step:
+               print(f"Step 1: Defining nodes and edges for {dataset_type} dataset...")
+               start_time = time.time()
+
+               word_nodeId_list, sent_nodeId_list, edge_data_list, sentid_node_map_list = define_node_edge_opt_parallel(docs_list, sent_similarity)
+
+               data_cpt.save_step(step_name=define_node_key, data={
+                    'word_nodeId_list': word_nodeId_list,
+                    'sent_nodeId_list': sent_nodeId_list,
+                    'edge_data_list': edge_data_list,
+                    'sentid_node_map_list': sentid_node_map_list
+               }, dataset_type=dataset_type)
+               print(f"Step 1 finished in {time.time() - start_time:.2f}s for {dataset_type} dataset")
+          else:
+               data = data_cpt.load_step(step_name=define_node_key, dataset_type=dataset_type)
+               if data:
+                    word_nodeId_list = data['word_nodeId_list']
+                    sent_nodeId_list = data['sent_nodeId_list']
+                    edge_data_list = data['edge_data_list']
+                    sentid_node_map_list = data['sentid_node_map_list']
+
+     # --- Step 2: Create NetworkX Graphs (Parallel) ---
+     if not latest_step or latest_step in [define_node_key, graph_create_key]:
+          if not latest_step or latest_step != graph_create_key:  # Run if starting or finished step 1
+               print(f"Step 2: Creating NetworkX graphs in parallel for {dataset_type} dataset...")
+               start_time = time.time()
+               num_items = len(word_nodeId_list)
+               num_workers = auto_workers()
+               pool_args = list(zip(word_nodeId_list, sent_nodeId_list, edge_data_list))
+
+               if num_items > 0:
+                    with multiprocessing.get_context("spawn").Pool(num_workers) as pool:
+                         graph_list = list(tqdm(pool.imap(parallel_create_graph, pool_args), total=num_items,
+                                             desc=f"Creating NX Graphs for {dataset_type} dataset"))
+               else:
+                    graph_list = []
+
+               data_cpt.save_step(step_name=graph_create_key, data={'graph_list': graph_list}, dataset_type=dataset_type)
+               print(f"Step 2 finished in {time.time() - start_time:.2f}s for {dataset_type} dataset")
+          else:
+               data = data_cpt.load_step(step_name=graph_create_key,dataset_type=dataset_type)
+               if data:
+                    graph_list = data['graph_list']
+                    print(f"Loading associated data from Step 1 checkpoint for {dataset_type} dataset...")
+                    define_data = data_cpt.load_step(step_name=define_node_key, dataset_type=dataset_type)
+                    if define_data:
+                         sentid_node_map_list = define_data['sentid_node_map_list']
+
+     # --- Step 3: Embed Graph Nodes (Batched, on GPU) ---
+     embedded_graph_list = None  # This will hold graphs with CPU embeddings for saving/conversion
+     if not latest_step or latest_step in [define_node_key, graph_create_key, embed_graph_key]:
+          if not latest_step or latest_step != embed_graph_key:  # Run if starting or finished step 1 or 2
+               print(f"Step 3: Embedding graph nodes for {dataset_type} dataset...")
+               start_time = time.time()
+               embedded_graphs_gpu = embed_nodes_gpu(graph_list, sentid_node_map_list)
+
+               ## transfers to cpu
+               print(f"Moving embeddings to CPU for checkpointing/conversion for {dataset_type} dataset...")
+               embedded_graph_list = []  # This will store graphs with CPU embeddings
+               for g in embedded_graphs_gpu:
+                    # modify in place for efficiency
+                    for node, data in g.nodes(data=True):
+                         if 'embedding' in data and isinstance(data['embedding'], torch.Tensor):
+                              data['embedding'] = data['embedding'].detach().cpu()
+                    embedded_graph_list.append(g)
+
+               del embedded_graphs_gpu
+               clean_memory()
+
+               data_cpt.save_step(step_name=embed_graph_key, data={'embedded_graph_list': embedded_graph_list}, dataset_type=dataset_type)
+               print(f"Step 3 finished in {time.time() - start_time:.2f}s for {dataset_type} dataset")
+          else:
+               data = data_cpt.load_step(step_name=embed_graph_key, dataset_type=dataset_type)
+               if data:
+                    embedded_graph_list = data['embedded_graph_list']
+                    for g in embedded_graph_list:
+                         for node, data in g.nodes(data=True):
+                              if 'embedding' in data and isinstance(data['embedding'], torch.Tensor) and data['embedding'].requires_grad:
+                                   data['embedding'] = data['embedding'].detach()
+
+     # --- Step 4: Convert to PyG HeteroData (Parallel) ---
+     node_sent_map_list = None
+     if not latest_step or latest_step in [define_node_key, graph_create_key, embed_graph_key, final_graph_key]:
+          if not latest_step or latest_step != final_graph_key:
+               print("Step 4: Converting graphs to PyG format in parallel...")
+               start_time = time.time()
+               pyg_graph_list_cpu = []
+               node_sent_map_list = []
+
+               num_items = len(embedded_graph_list)
+               num_workers = auto_workers()
+
+               if num_items > 0:
+                    # Use multiprocessing Pool with imap for ordered results
+                    with multiprocessing.get_context("spawn").Pool(num_workers) as pool:
+                         results = list(tqdm(pool.imap(parallel_convert_graph, embedded_graph_list), total=num_items, desc="Converting to PyG"))
+
+                    pyg_graph_list_cpu = [res[0] for res in results]
+                    node_sent_map_list = [res[1] for res in results]
+               else:
+                    pyg_graph_list_cpu = []
+                    node_sent_map_list = []
+                    
+               data_cpt.save_step(step_name=final_graph_key, data={
+                    'pyg_graph_list': pyg_graph_list_cpu,
+                    'node_sent_map_list': node_sent_map_list},
+                    dataset_type=dataset_type)
+               print(f"Step 4 finished in {time.time() - start_time:.2f}s")
+          else:
+               data = data_cpt.load_step(step_name=final_graph_key, dataset_type=dataset_type)
+               pyg_graph_list_cpu = data['pyg_graph_list']
+               node_sent_map_list = data['node_sent_map_list']
+     
      
      return pyg_graph_list_cpu, node_sent_map_list
