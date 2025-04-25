@@ -1,6 +1,7 @@
 import torch
 import networkx as nx
 from transformers import BertModel, BertTokenizer, BertConfig
+from transformers import AutoModel, AutoTokenizer
 from sentence_transformers import SentenceTransformer
 from torch_geometric.data import HeteroData
 from contextlib import contextmanager
@@ -15,6 +16,30 @@ from utils.model_utils import auto_workers, clean_memory
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
+@contextmanager
+def load_emb_models(models_info, target_device):
+     """
+     Context manager to load specified BERT models onto a device
+     and ensure they are deleted from memory afterwards.
+     """
+     models = {}
+     try:
+          for model_type, model_name in models_info.items():
+               if model_type == 'main_transformer':
+                    models[model_type] = AutoModel.from_pretrained(model_name).to(target_device)
+               elif model_type == 'tokenizer':
+                    models[model_type] = AutoTokenizer.from_pretrained(model_name, use_fast=False)
+               else:
+                    raise ValueError(f"Unsupported model type: {model_type}")
+          
+          yield models
+
+     finally:
+          for model_name, model in models.items():
+               del model
+          
+          clean_memory()
+          
 @contextmanager
 def load_bert_models(models_info, target_device):
      """
@@ -124,7 +149,6 @@ def get_sent_pos_encoding(sentid_node_map_list, bert_abs_model, bert_relative_mo
 
      return sent_pos_emb_list
 
-
 def parallel_create_graph(args):
      """
      Worker function for multiprocessing: Creates a single NetworkX graph.
@@ -160,7 +184,128 @@ def parallel_create_graph(args):
      
      return graph
 
-def embed_nodes_gpu(graphs, sentid_node_map_list, word_batch_size=64, sentence_batch_size=32):
+def embed_nodes_with_rel_pos(graphs, word_emb_batch_size=64, sentence_emb_batch_size=32):
+     """embed nodes with explicit no positional encoding
+     """
+     models_info = {
+          'main_transformer': 'microsoft/deberta-v3-base',
+          'tokenizer': 'microsoft/deberta-v3-base',
+     }
+     embedded_graphs = []
+     
+     print(f"Embedding nodes on device: {device}")
+
+     with load_emb_models(models_info, device) as models:
+          main_transformer_model = models["main_transformer"].eval()
+          tokenizer = models["tokenizer"]
+          
+          try:
+               target_dim = main_transformer_model.config.hidden_size
+               if not isinstance(target_dim, int) or target_dim <= 0:
+                    raise ValueError("Invalid hidden_size")
+          except AttributeError:
+               raise ValueError("Could not determine hidden_size from main_transformer_model config.")
+
+          for i, graph in enumerate(tqdm(graphs, desc="Embedding Graphs")):
+               sentences_texts = []
+               sentence_node_ids = []
+               word_texts = []
+               word_node_ids = []
+
+               for node, data in graph.nodes(data=True):
+                    node_type = data.get('type')
+                    node_text_data = data.get('text')
+
+                    if node_type == 'sentence':
+                         sentences_texts.append(node_text_data[2])
+                         sentence_node_ids.append(node)
+                    elif node_type == 'word':
+                         word_texts.append(node_text_data)
+                         word_node_ids.append(node)
+               
+               # --- Sentence Embedding ---
+               final_sentence_embed_id_map = {}
+               if sentence_node_ids:
+                    all_sent_embeddings = []
+                    with torch.no_grad():
+                         for j in range(0, len(sentences_texts), sentence_emb_batch_size):
+                              batch_texts = sentences_texts[j : j + sentence_emb_batch_size]
+
+                              inputs = tokenizer(
+                                   batch_texts,
+                                   return_tensors='pt',
+                                   padding=True,
+                                   truncation=True,
+                                   max_length=main_transformer_model.config.max_position_embeddings # Use model's capacity
+                              ).to(device)
+
+                              outputs = main_transformer_model(**inputs)
+                              token_embeddings = outputs.last_hidden_state # shape: (batch, seq_len, hidden_size)
+
+                              # mean pool token embeddings (respecting padding) to get sentence embedding
+                              input_mask_expanded = inputs['attention_mask'].unsqueeze(-1).expand(token_embeddings.size()).float()
+                              sum_embeddings = torch.sum(token_embeddings * input_mask_expanded, 1)
+                              sum_mask = torch.clamp(input_mask_expanded.sum(1), min=1e-9)
+                              mean_pooled_embeddings = sum_embeddings / sum_mask # Shape: (batch, hidden_size)
+                              all_sent_embeddings.append(mean_pooled_embeddings)
+
+                    if all_sent_embeddings:
+                         final_main_sent_embeddings = torch.cat(all_sent_embeddings, dim=0)
+                    
+                    # Map embeddings directly to node IDs
+                    for idx, node_id in enumerate(sentence_node_ids):
+                         final_sentence_embed_id_map[node_id] = final_main_sent_embeddings[idx]
+               else:
+                    print(f"\nWarning: No sentence embeddings generated for graph {i} (List was empty).")
+
+               # --- Word Embedding ---
+               final_word_embed_id_map = {}
+               if word_node_ids:
+                    all_word_embeddings = []
+                    with torch.no_grad():
+                         for j in range(0, len(word_texts), word_emb_batch_size):
+                              batch_texts = word_texts[j : j + word_emb_batch_size]
+
+                              inputs = tokenizer(
+                                   batch_texts, return_tensors='pt', padding=True, truncation=True,
+                                   max_length=main_transformer_model.config.max_position_embeddings
+                              ).to(device)
+
+                              outputs = main_transformer_model(**inputs)
+                              token_embeddings = outputs.last_hidden_state
+                              # Mean Pooling
+                              input_mask_expanded = inputs['attention_mask'].unsqueeze(-1).expand(token_embeddings.size()).float()
+                              sum_embeddings = torch.sum(token_embeddings * input_mask_expanded, 1)
+                              sum_mask = torch.clamp(input_mask_expanded.sum(1), min=1e-9)
+                              mean_pooled_embeddings = sum_embeddings / sum_mask
+                              all_word_embeddings.append(mean_pooled_embeddings)
+
+                    if all_word_embeddings:
+                         final_word_embeddings = torch.cat(all_word_embeddings, dim=0)
+
+                    for idx, node_id in enumerate(word_node_ids):
+                         final_word_embed_id_map[node_id] = final_word_embeddings[idx]
+               else:
+                    print(f"\nWarning: No word embeddings generated for graph {i} (List was empty).")
+
+               # --- Assign Embeddings to Graph Nodes ---
+               nodes_assigned_count = 0
+               for node_id, node_data in graph.nodes(data=True):
+                    if node_data.get('type') == 'sentence':
+                         if node_id in final_sentence_embed_id_map:
+                              graph.nodes[node_id]['embedding'] = final_sentence_embed_id_map[node_id]
+                              nodes_assigned_count += 1
+                    elif node_data.get('type') == 'word':
+                         if node_id in final_word_embed_id_map:
+                              graph.nodes[node_id]['embedding'] = final_word_embed_id_map[node_id]
+                              nodes_assigned_count += 1
+
+               embedded_graphs.append(graph)
+
+     return embedded_graphs
+     
+     
+def embed_nodes_with_abs_pos(graphs, sentid_node_map_list, word_batch_size=64, sentence_batch_size=32):
      """
      Embeds nodes using BERT models on GPU.
      - Batches word embeddings for efficiency.
@@ -456,8 +601,9 @@ def create_embed_graphs_opt(docs_list, sent_similarity=0.6):
           if not latest_step or latest_step != embed_graph_key: # Run if starting or finished step 1 or 2
                print("Step 3: Embedding graph nodes (using GPU if available)...")
                start_time = time.time()
-               embedded_graphs_gpu = embed_nodes_gpu(graph_list, sentid_node_map_list)
-
+               # embedded_graphs_gpu = embed_nodes_with_abs_pos(graph_list, sentid_node_map_list)
+               embedded_graphs_gpu = embed_nodes_with_rel_pos(graph_list)
+               
                ## transfers to cpu
                print("  Moving embeddings to CPU for checkpointing/conversion...")
                embedded_graph_list = [] # This will store graphs with CPU embeddings
@@ -577,7 +723,8 @@ def get_embedded_pyg_graphs(dataset_type, docs_list, sent_similarity):
           if not latest_step or latest_step != embed_graph_key:  # Run if starting or finished step 1 or 2
                print(f"Step 3: Embedding graph nodes for {dataset_type} dataset...")
                start_time = time.time()
-               embedded_graphs_gpu = embed_nodes_gpu(graph_list, sentid_node_map_list)
+               # embedded_graphs_gpu = embed_nodes_with_abs_pos(graph_list, sentid_node_map_list)
+               embedded_graphs_gpu = embed_nodes_with_rel_pos(graph_list)
 
                ## transfers to cpu
                print(f"Moving embeddings to CPU for checkpointing/conversion for {dataset_type} dataset...")

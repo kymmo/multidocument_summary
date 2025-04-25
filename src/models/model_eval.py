@@ -47,8 +47,7 @@ def eval_t5_summary(eval_data_path, max_summary_length, batch_size = 16, sent_si
                     word_feat = batched_graph['word'].x
                     sent_text = batched_graph['sentence'].text
                     
-                    corrupted_sentence_feat = F.dropout(sentence_feat, p=0.1, training=gnn_model.training)
-                    gnn_embeddings = gnn_model(batched_graph, corrupted_sentence_feat, word_feat)
+                    gnn_embeddings = gnn_model(batched_graph, sentence_feat, word_feat)
                     concat_embs = get_combined_embed2(batch_graph, gnn_embeddings, sent_text)
                     summaries = generate_t5_summary(fine_tuned_t5, concat_embs, max_summary_length)
                     
@@ -70,13 +69,13 @@ def generate_t5_summary(fine_tuned_t5, combin_embeddings_list, max_summary_lengt
           
           generation_config = {
                "max_length": max_summary_length,
-               "num_beams": 5,
+               "num_beams": 3,
                "early_stopping": True,
                "repetition_penalty": 2.0,
                "no_repeat_ngram_size": 4,
                "length_penalty": 1.0,
                "temperature": 0.9,
-               "do_sample": True,
+               "do_sample": False,
                "top_k": 50,
                "top_p": 0.95,
                "bos_token_id": t5_tokenizer.pad_token_id,
