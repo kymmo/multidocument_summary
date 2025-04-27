@@ -329,7 +329,7 @@ def fine_tune_t5(file_path, val_file_path, out_size, num_epochs = 20,
                          sent_text = batched_graph['sentence'].text
                          
                          ## adding data noise
-                         corrupted_sentence_feat = F.dropout(sentence_feat, p=0.1, training=gnn_model.training)
+                         corrupted_sentence_feat = F.dropout(sentence_feat, p=0.1, training=custom_t5_model.training)
 
                          # forward
                          gnn_embeddings = gnn_model(batched_graph, corrupted_sentence_feat, word_feat)
@@ -352,7 +352,7 @@ def fine_tune_t5(file_path, val_file_path, out_size, num_epochs = 20,
                          optimizer.zero_grad()
                          
                          if global_step % 100 == 0: # Log every 100 steps example
-                              print(f"[Scheduler] Optimize Step {global_step}, Current LR: {scheduler.get_last_lr()[0]:.8f}")
+                              print(f"[T5 Scheduler] Optimize Step {global_step}, Current LR: {scheduler.get_last_lr()[0]:.8f}")
                          
                avg_loss = total_loss / processed_batches_this_epoch if processed_batches_this_epoch > 0 else 0
                print(f"[Training] Epoch {epoch+1} / {num_epochs}, Loss: {avg_loss:.4f}, Learning Rate: {scheduler.get_last_lr()[0]:.6f}")

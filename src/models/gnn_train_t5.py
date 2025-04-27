@@ -16,11 +16,12 @@ from utils.model_utils import freeze_model, clean_memory, print_gpu_memory
 base_model = "google-t5/t5-base"
 small_model = "google-t5/t5-small" #for test
 # t5_tokenizer = T5Tokenizer.from_pretrained(small_model, legacy=False)
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 t5_tokenizer = T5Tokenizer.from_pretrained(base_model)
-t5_model = T5ForConditionalGeneration.from_pretrained(base_model).to(device)
+t5_model = T5ForConditionalGeneration.from_pretrained(base_model)
 
-def train_gnn(file_path, hidden_size, out_size, num_heads, val_file_path, t5_model = t5_model, sentence_in_size = 768, word_in_size = 768, learning_rate=0.001, num_epochs=20, feat_drop=0.2, attn_drop=0.2, batch_size=32, save_method='entire_model', patience=5, sent_similarity_threshold = 0.6):
+def train_gnn(file_path, hidden_size, out_size, num_heads, val_file_path, t5_model = t5_model, sentence_in_size = 768, word_in_size = 768, 
+               learning_rate=0.001, num_epochs=20, feat_drop=0.2, attn_drop=0.2, batch_size=32, save_method='entire_model', patience=5, sent_similarity_threshold = 0.6,
+               device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')):
      """Trains the HetGNN model using a proxy task."""
      clean_memory()
      print(f"Task runing on {device}")
@@ -44,6 +45,7 @@ def train_gnn(file_path, hidden_size, out_size, num_heads, val_file_path, t5_mod
      
      projector_hidden_size = 1024
      gnn_model = RelHetGraph(hidden_size, out_size, num_heads, sentence_in_size, word_in_size , feat_drop, attn_drop).to(device)
+     t5_model = t5_model.to(device)
      T5_embed_layer_projector = nn.Sequential(
                nn.Linear(out_size, projector_hidden_size),
                nn.LayerNorm(projector_hidden_size),
@@ -128,12 +130,12 @@ def train_gnn(file_path, hidden_size, out_size, num_heads, val_file_path, t5_mod
                     total_loss += loss.item()
                
                avg_train_loss = total_loss / len(train_dataloader)
-               print(f"[Training] Epoch {epoch} / {num_epochs}, Loss: {avg_train_loss:.4f}, Training Learning Rate: {scheduler.get_last_lr()[0]:.6f}")
+               print(f"[Training] Epoch {epoch + 1} / {num_epochs}, Loss: {avg_train_loss:.4f}, Training Learning Rate: {scheduler.get_last_lr()[0]:.6f}")
                
                # --- Validation for Early Stop ---
                print('--- Validation ---')
                gnn_model.eval()
-               freeze_model(gnn_model)
+               T5_embed_layer_projector.eval()
                total_val_loss = 0
                with torch.no_grad():
                     for batch in val_dataloader:
@@ -159,7 +161,7 @@ def train_gnn(file_path, hidden_size, out_size, num_heads, val_file_path, t5_mod
                          total_val_loss += loss.item()
 
                avg_val_loss = total_val_loss / len(val_dataloader)
-               print(f"[Validation] Epoch {epoch}/{num_epochs}, Loss: {avg_val_loss:.4f}")
+               print(f"[Validation] Epoch {epoch + 1}/{num_epochs}, Loss: {avg_val_loss:.4f}")
      
                models_to_save = {'gnn_model': gnn_model, 'T5_projector': T5_embed_layer_projector}
                optimizers_to_save = {'optimizer': optimizer}

@@ -55,7 +55,7 @@ def compute_edges_similarity(sents, edge_threshold, encode_batch_size=256, sim_b
           return [], None
 
      embeddings = []
-     with torch.inference_mode(): # More efficient than no_grad()
+     with torch.inference_mode():
           for i in range(0, len(sents), encode_batch_size):
                batch = sents[i:i + encode_batch_size]
                emb = _subprocess_st_model.encode(batch, convert_to_tensor=True, device=device, show_progress_bar=False)
@@ -135,6 +135,7 @@ def process_batch(batch_input):
 
      # unpack input
      try:
+          if not batch_input: return []
           edge_similarity_threshold = batch_input[0][1]
           list_of_docs = [doc for sample, _ in batch_input for doc in sample] ## ([(training_id, doc_id, doc_text), (),...], threshold)
           if not isinstance(list_of_docs, list) or not isinstance(edge_similarity_threshold, (float, int)):
@@ -188,6 +189,9 @@ def process_batch(batch_input):
                sample_token_node_map_by_doc = {}
                sample_edge_data = defaultdict(list)
 
+               sample_all_sent_texts = []
+               sample_sent_index_to_node_id = []
+               
                # Sort items by doc_idx_in_sample to ensure consistent processing order within the sample
                sample_items.sort(key=lambda x: x['doc_idx_in_sample'])
 
@@ -200,37 +204,28 @@ def process_batch(batch_input):
                          print(f"[WARN] Index mismatch retrieving processed data for doc (orig={original_training_idx}, doc={doc_idx_in_sample}) at batch index {batch_list_index}. Skipping doc.")
                          continue
                     doc = processed_docs_ordered[batch_list_index]
-
                     doc_sents = list(doc.sents)
-                    doc_sent_texts = [sent.text for sent in doc_sents]
-
+                    
                     # --- Assign sentence node IDs (contiguous within sample) ---
                     doc_token_to_sample_node_list = [-1] * len(doc)
                     for sent_id_in_doc, sent_obj in enumerate(doc_sents):
                          current_sent_node_id_in_sample = current_sample_node_offset
+                         sent_text = sent_obj.text
                          sample_sentId_nodeId_map[(original_training_idx, doc_idx_in_sample, sent_id_in_doc)] = current_sent_node_id_in_sample
-                         sample_sent_nodeId_map_by_key[(original_training_idx, doc_idx_in_sample, sent_obj.text)].append(current_sent_node_id_in_sample)
+                         sample_sent_nodeId_map_by_key[(original_training_idx, doc_idx_in_sample, sent_text)].append(current_sent_node_id_in_sample)
 
                          for token in sent_obj:
                               if 0 <= token.i < len(doc_token_to_sample_node_list):
                                    doc_token_to_sample_node_list[token.i] = current_sent_node_id_in_sample
 
+                         sample_all_sent_texts.append(sent_text)
+                         sample_sent_index_to_node_id.append(current_sent_node_id_in_sample)
+                         
                          current_sample_node_offset += 1 # Increment offset for the next sentence in the sample
 
                     sample_token_node_map_by_doc[(original_training_idx, doc_idx_in_sample)] = doc_token_to_sample_node_list
 
-                    # 1. Similarity Edges
-                    similarity_edges = compute_edges_similarity_ann(doc_sent_texts, edge_similarity_threshold)
-                    if similarity_edges is None:
-                         print(f"[WARN] No similarity edges found for document (orig={original_training_idx}, doc={doc_idx_in_sample}).")
-                         continue
-                    
-                    for node_i_local, node_j_local, sim_value in similarity_edges:
-                         sample_level_node_i = sample_sentId_nodeId_map.get((original_training_idx, doc_idx_in_sample, node_i_local))
-                         sample_level_node_j = sample_sentId_nodeId_map.get((original_training_idx, doc_idx_in_sample, node_j_local))
-                         _add_edge_local(sample_edge_data, sample_level_node_i, sample_level_node_j, "similarity", weight=sim_value)
-
-                    # 2. Coreference Edges
+                    # 1. Coreference Edges
                     if doc._.coref_chains:
                          doc_token_map = sample_token_node_map_by_doc.get((original_training_idx, doc_idx_in_sample), [])
                          if not doc_token_map:
@@ -260,6 +255,18 @@ def process_batch(batch_input):
                               if pronoun_node is not None and pronoun_node >= 0 and pronoun_node != antecedent_node:
                                    _add_edge_local(sample_edge_data, pronoun_node, antecedent_node, "pronoun_antecedent", 1.0)
 
+               
+               # 2. Similarity Edges
+               similarity_edges = compute_edges_similarity_ann(sample_all_sent_texts, edge_similarity_threshold)
+               if similarity_edges is None:
+                    print(f"[WARN] No similarity edges found for document (orig={original_training_idx}, doc={doc_idx_in_sample}).")
+                    continue
+               
+               for node_i_local, node_j_local, sim_value in similarity_edges:
+                    sample_level_node_i = sample_sent_index_to_node_id[node_i_local]
+                    sample_level_node_j = sample_sent_index_to_node_id[node_j_local]
+                    _add_edge_local(sample_edge_data, sample_level_node_i, sample_level_node_j, "similarity", weight=sim_value)
+
 
                # --- Assign word node IDs for the ENTIRE SAMPLE ---
                current_word_node_offset = current_sample_node_offset
@@ -285,7 +292,7 @@ def process_batch(batch_input):
                     
                     current_word_node_offset += 1
 
-               # --- Word-Sentence Edges for the ENTIRE SAMPLE ---
+               # 3. Word-Sentence Edges for the ENTIRE SAMPLE
                for item_info in sample_items:
                     doc_idx_in_sample = item_info['doc_idx_in_sample']
                     batch_list_index = item_info['batch_list_index']
@@ -408,7 +415,7 @@ def extract_keywords_internal(docs_text, words_per_100=1, min_keywords=2, max_ke
 
      return final_keywords
 
-def compute_edges_similarity_ann(sentence_texts, abs_threshold):
+def compute_edges_similarity_ann(sentence_texts, abs_threshold, EMB_BATCH_SIZE=128):
      """
      Computes similarity edges using FAISS KNN search and filtering based on
      the *absolute* value of cosine similarity. Finds pairs where
@@ -433,7 +440,7 @@ def compute_edges_similarity_ann(sentence_texts, abs_threshold):
                     convert_to_tensor=True,
                     device=device,
                     show_progress_bar=False,
-                    batch_size=128
+                    batch_size=EMB_BATCH_SIZE
                )
                
                embeddings_tensor = F.normalize(embeddings_tensor, p=2, dim=1)
