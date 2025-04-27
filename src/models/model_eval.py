@@ -6,7 +6,7 @@ from torch_geometric.data import Batch
 import torch.nn.functional as F
 from torch.utils.data import DataLoader as data_DataLoader
 
-from models.gnn_train_t5 import t5_tokenizer, t5_model, device
+from models.gnn_train_t5 import t5_tokenizer, t5_model
 from utils.model_utils import clean_memory, freeze_model
 from models.CustomT5 import CustomT5, reshape_embedding_to_tensors
 from models.RelHetGraph import RelHetGraph
@@ -14,6 +14,8 @@ from models.DatasetLoader import EvalDataset, custom_collate_fn
 from models.CheckPointManager import DataCheckpointManager
 from models.two_stage_train import get_combined_embed2
 from utils.model_utils import rouge_eval, merge_dicts
+
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 def eval_t5_summary(eval_data_path, max_summary_length, batch_size = 16, sent_similarity = 0.6):
      ## models load
@@ -60,7 +62,6 @@ def eval_t5_summary(eval_data_path, max_summary_length, batch_size = 16, sent_si
      print(f"Finish evaluation, time cost:  {eval_end_time - eval_start_time:.4f} s.")
      
      return avg
-
 
 def generate_t5_summary(fine_tuned_t5, combin_embeddings_list, max_summary_length=512):
      with torch.no_grad():
