@@ -7,7 +7,7 @@ from torch_geometric.data import HeteroData
 from contextlib import contextmanager
 import concurrent.futures
 import multiprocessing
-from tqdm import tqdm
+from tqdm.auto import tqdm
 import time
 import traceback
 
@@ -213,7 +213,7 @@ def embed_nodes_with_rel_pos(graphs, word_emb_batch_size=64, sentence_emb_batch_
                except AttributeError:
                     raise ValueError("Could not determine hidden_size from main_transformer_model config.")
 
-               for i, graph in enumerate(tqdm(graphs, desc="Embedding Graphs",position=1)):
+               for i, graph in enumerate(tqdm(graphs, desc="Embedding Graphs", position=0, leave=True)):
                     sentences_texts = []
                     sentence_node_ids = []
                     word_texts = []
