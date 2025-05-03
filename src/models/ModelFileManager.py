@@ -8,7 +8,7 @@ from models.CustomT5 import CustomT5
 
 class ModelFileManager:
      def __init__(self):
-          self.save_parent_dir = os.path.join("content", "drive", "MyDrive", "saved_models")
+          self.save_parent_dir = os.path.join("/", "content", "drive", "MyDrive", "saved_models")
           self.gnn_model_dir = os.path.join(self.save_parent_dir, "gnn_trained_weights.pt")
           self.t5_model_dir = os.path.join(self.save_parent_dir, "fine_tuned_t5")
           
