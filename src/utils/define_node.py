@@ -637,7 +637,7 @@ def define_node_edge_opt_parallel(documents_list, edge_similarity_threshold=0.6)
 
 def monitor_usage(interval, stop_event):
      """Monitors CPU and memory usage."""
-     while not stop_event.wait(20 * 60): ## every 10 mins
+     while not stop_event.wait(20 * 60): ## every 20 mins
           label = "processing sample"
           print_cpu_memory(label, interval)
           print_gpu_memory(label)

@@ -78,7 +78,7 @@ def auto_workers():
 
           mem_limit_workers = max(1, int((mem_available_gb * 0.90) / model_mem_gb)) # Use 90% of available mem
           # Leave at least one CPU core free for the main process and OS
-          cpu_limit_workers = max(1, cpu_cnt - 1)
+          cpu_limit_workers = max(1, cpu_cnt - 2)
 
           workers = min(cpu_limit_workers, mem_limit_workers)
           return max(workers, 2)

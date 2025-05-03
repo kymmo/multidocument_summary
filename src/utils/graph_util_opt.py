@@ -314,6 +314,8 @@ def embed_nodes_with_rel_pos(graphs, word_emb_batch_size=64, sentence_emb_batch_
      except Exception as e:
           print(f"[ERROR] An exception occurred while embedding graphs: {e}")
           traceback.print_exc()
+          
+     del embedded_graphs, final_word_embed_id_map, final_sentence_embed_id_map, all_sent_embeddings
      
      
 def embed_nodes_with_abs_pos(graphs, sentid_node_map_list, word_batch_size=64, sentence_batch_size=32):
@@ -732,7 +734,7 @@ def get_embedded_pyg_graphs(dataset_type, docs_list, sent_similarity):
                     define_data = data_cpt.load_step(step_name=define_node_key, dataset_type=dataset_type)
                     if define_data:
                          sentid_node_map_list = define_data['sentid_node_map_list']
-
+          
      # --- Step 3: Embed Graph Nodes (Batched, on GPU) ---
      embedded_graph_list = None  # This will hold graphs with CPU embeddings for saving/conversion
      if not latest_step or latest_step in [define_node_key, graph_create_key, embed_graph_key]:
@@ -766,6 +768,9 @@ def get_embedded_pyg_graphs(dataset_type, docs_list, sent_similarity):
                               if 'embedding' in data and isinstance(data['embedding'], torch.Tensor) and data['embedding'].requires_grad:
                                    data['embedding'] = data['embedding'].detach()
 
+     ## clean up memory regularly
+     clean_memory()
+     
      # --- Step 4: Convert to PyG HeteroData (Parallel) ---
      node_sent_map_list = None
      if not latest_step or latest_step in [define_node_key, graph_create_key, embed_graph_key, final_graph_key]:
