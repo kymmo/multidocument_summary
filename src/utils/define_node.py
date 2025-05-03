@@ -415,7 +415,7 @@ def extract_keywords_internal(docs_text, words_per_100=1, min_keywords=2, max_ke
 
      return final_keywords
 
-def compute_edges_similarity_ann(sentence_texts, abs_threshold, EMB_BATCH_SIZE=128):
+def compute_edges_similarity_ann(sentence_texts, abs_threshold, EMB_BATCH_SIZE=128, GPU_K_LIMIT=2048):
      """
      Computes similarity edges using FAISS KNN search and filtering based on
      the *absolute* value of cosine similarity. Finds pairs where
@@ -462,12 +462,11 @@ def compute_edges_similarity_ann(sentence_texts, abs_threshold, EMB_BATCH_SIZE=1
 
      # --- 3. Create FAISS Index (Using Inner Product) ---
      index = faiss.IndexFlatIP(dim)
-
      res = None # GPU resources handle
      using_gpu = False
 
      # --- 4. Attempt to Move Index to GPU ---
-     if device.type == 'cuda':
+     if device.type == 'cuda' and n_sents <= GPU_K_LIMIT:
           try:
                res = faiss.StandardGpuResources()
                index = faiss.index_cpu_to_gpu(res, device.index or 0, index)
@@ -593,7 +592,8 @@ def define_node_edge_opt_parallel(documents_list, edge_similarity_threshold=0.6)
           for future in tqdm(
                concurrent.futures.as_completed(futures),
                total=len(futures),
-               desc="Graph Node-Edge Batch-Processing"
+               desc="Graph Node-Edge Batch-Processing",
+               position=0
           ):
                try:
                     batch_result = future.result()

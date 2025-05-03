@@ -27,6 +27,7 @@ class EvalDataset(Dataset):
 
 class OptimizedDataset(Dataset):
      def __init__(self, file_path, dataset_type, sent_similarity):
+          mp.set_sharing_strategy('file_system')
           self.file_path = file_path
           self.data = None
           self._lock = mp.Lock()
@@ -41,25 +42,7 @@ class OptimizedDataset(Dataset):
                
                raw_data = get_embed_graph(self.file_path, dataset_type=self.dataset_type, sent_similarity=self.sent_similarity)
                
-               self.data = []
-               for het_graph in raw_data:
-                    shared_graph = HeteroData()
-                    
-                    # conver the embedding to shared memory space
-                    for node_type in het_graph.node_types:
-                         x = het_graph[node_type].x.clone().share_memory_()
-                         txt = het_graph[node_type].text ### TODO: str list to copy to shared momery
-                         shared_graph[node_type].x = x
-                         shared_graph[node_type].text = txt
-                         
-                    for edge_type in het_graph.edge_types:
-                         edge_index = het_graph[edge_type].edge_index.clone().share_memory_()
-                         edge_attr = het_graph[edge_type].edge_attr.clone().share_memory_()
-                         shared_graph[edge_type].edge_index = edge_index
-                         shared_graph[edge_type].edge_attr = edge_attr
-                    
-                    self.data.append(shared_graph)
-               
+               self.data = raw_data
                self._loaded.value = True  # marked as loaded
           
      def __len__(self):

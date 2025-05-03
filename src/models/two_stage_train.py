@@ -4,6 +4,7 @@ from pathlib import Path
 import torch.nn as nn
 import time
 import math
+import shutil
 import torch.nn.functional as F
 from torch_geometric.data import Batch
 from torch.cuda.amp import autocast
@@ -17,6 +18,7 @@ from models.CheckPointManager import ModelCheckpointManager, DataCheckpointManag
 from utils.model_utils import freeze_model, clean_memory, print_gpu_memory
 from models.LongTextEncoder import LongTextEncoder
 from models.EarlyStopper import EarlyStopper
+from models.ModelFileManager import model_fm
 
 base_model = "google-t5/t5-base"
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -129,87 +131,6 @@ def get_combined_embed2(batch_graph_list, gnn_embeddings, sent_text):
           clean_memory()
      
      return concat_embedding_list
-     
-def get_combined_embed(batch_graph_list, gnn_embeddings, sent_text):
-     """ concat gnn_embedding and text t5 embeddings
-          output batch graph's sentences embedding list
-     """
-     # graph_ind = batch['sentence'].ptr.numpy()
-     concat_embedding_list = []
-     start_ind = 0
-     for i_th, graph in enumerate(batch_graph_list): # for each embs of graph
-          graph_sent_num = graph['sentence'].x.shape[0]
-          gnn_sent_embs = gnn_embeddings[start_ind: start_ind + graph_sent_num]
-          start_ind = start_ind + graph_sent_num
-          graph_sent = sent_text[i_th]
-          
-          ## t5 sent sembeddings
-          with torch.no_grad():
-               graph_sent.insert(0, "Generate a summary from documents' embeddings: ") # task prefix
-               padding = torch.zeros(1, gnn_sent_embs.shape[1]).to(device) ## padding for same size to sent
-               padding_gnn_embeddings = torch.cat([padding, gnn_sent_embs], dim = 0)
-          
-               with autocast():
-                    ## get T5 embeddings
-                    inputs = t5_tokenizer(
-                         graph_sent, 
-                         return_tensors="pt", 
-                         padding='max_length',
-                         truncation=True,
-                         max_length=512
-                    )
-                    input_ids = inputs['input_ids'].to(device)
-                    attention_mask = inputs['attention_mask'].to(device)
-
-                    t5_model.eval()
-                    encoder_sent_outputs = t5_model.encoder(
-                              input_ids,
-                              attention_mask=attention_mask,
-                              return_dict=True,
-                    )## encode text infor
-
-                    t5_embeddings = encoder_sent_outputs.last_hidden_state
-                    # ignore paddding
-                    masked_embeddings = t5_embeddings * attention_mask.unsqueeze(-1)
-                    avg_t5_embeddings = masked_embeddings.sum(dim=1) / attention_mask.sum(dim=1, keepdim=True) ## (sentence_number, embedding)
-                    avg_t5_embeddings = avg_t5_embeddings.to(device)
-                    
-                    del input_ids, attention_mask
-
-                    ## concatinate GNN and T5 embedding
-                    gnn_emb_norm = nn.LayerNorm(gnn_sent_embs.shape[1], device=device)(padding_gnn_embeddings)
-                    t5_emb_norm = nn.LayerNorm(t5_model.config.hidden_size, device=device)(avg_t5_embeddings)
-                    
-                    combined_embeddings = torch.cat([gnn_emb_norm, t5_emb_norm], dim=1)
-                    
-                    concat_embedding_list.append(combined_embeddings)
-                    
-                    del combined_embeddings
-     
-     return concat_embedding_list
-
-def chunked_cosine_similarity(embeddings, embedding_matrix, chunk_size=16):
-     similarities = []
-     embeddings = embeddings.half().contiguous()
-     embedding_matrix = embedding_matrix.half().contiguous()
-     
-     for i in range(0, embeddings.size(0), chunk_size):
-          chunk = embeddings[i:i + chunk_size]
-          with torch.no_grad():
-               sim = F.cosine_similarity(
-                    chunk.unsqueeze(1),
-                    embedding_matrix.unsqueeze(0),
-                    dim=2
-               )
-               sim = sim.float()
-               
-          similarities.append(sim.cpu())
-          
-          del chunk  # save gpu memory
-          del sim
-          torch.cuda.empty_cache()
-          
-     return torch.cat(similarities, dim=0)
 
 def fine_tune_t5(file_path, val_file_path, out_size, num_epochs = 20, 
                batch_size = 8, accumulate_step = 4, patience = 5, sent_similarity_threshold=0.6,
@@ -236,7 +157,8 @@ def fine_tune_t5(file_path, val_file_path, out_size, num_epochs = 20,
      
      ## models load
      try:
-          gnn_model = torch.load('gnn_trained_weights.pt')
+          # gnn_model = torch.load('gnn_trained_weights.pt')
+          gnn_model = model_fm.load_gnn()
           gnn_model = gnn_model.to(device)
           gnn_model.eval()
           freeze_model(gnn_model)
@@ -431,7 +353,8 @@ def fine_tune_t5(file_path, val_file_path, out_size, num_epochs = 20,
      else:
           print("[Checkpoint] Best checkpoint not found. Using the model state from the last completed epoch.")
      
-     custom_t5_model.save_pretrained("./fine_tuned_t5")
+     # custom_t5_model.save_pretrained("./fine_tuned_t5")
+     model_fm.save_t5(custom_t5_model)
      
      del custom_t5_model
      del gnn_model

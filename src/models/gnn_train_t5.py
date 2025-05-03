@@ -1,4 +1,6 @@
 import torch
+import os
+import shutil
 import torch.nn as nn
 from torch_geometric.data import Batch
 import torch.nn.functional as F
@@ -11,11 +13,11 @@ from models.DatasetLoader import EvalDataset, OptimizedDataset, custom_collate_f
 from models.CheckPointManager import ModelCheckpointManager
 from models.EarlyStopper import EarlyStopper
 from models.CheckPointManager import DataCheckpointManager
+from models.ModelFileManager import model_fm
 from utils.model_utils import freeze_model, clean_memory, print_gpu_memory
 
 base_model = "google-t5/t5-base"
 small_model = "google-t5/t5-small" #for test
-# t5_tokenizer = T5Tokenizer.from_pretrained(small_model, legacy=False)
 t5_tokenizer = T5Tokenizer.from_pretrained(base_model)
 t5_model = T5ForConditionalGeneration.from_pretrained(base_model)
 
@@ -211,7 +213,8 @@ def train_gnn(file_path, hidden_size, out_size, num_heads, val_file_path, t5_mod
      
      if save_method == 'entire_model':
           ## save entire model
-          torch.save(gnn_model, 'gnn_trained_weights.pt')
+          model_fm.save_gnn(gnn_model)
+          # torch.save(gnn_model, 'gnn_trained_weights.pt')
      elif save_method == 'weights':
           torch.save(gnn_model.state_dict(), 'gnn_trained_weights.pth')
           torch.save(T5_embed_layer_projector.state_dict(), 't5_projector_weights.pth')
@@ -223,45 +226,6 @@ def train_gnn(file_path, hidden_size, out_size, num_heads, val_file_path, t5_mod
      del T5_embed_layer_projector
      del optimizer, scheduler, scaler
      clean_memory()
-     
-#################
-######  DEPRECATED
-#################
-def get_gnn_trained_embedding(evl_data_path, hidden_size, out_size, num_heads,sentence_in_size = 768, word_in_size = 768, feat_drop=0.2, attn_drop=0.2, batch_size=32):
-     ## must be the same para of the train model
-     raise DeprecationWarning('get_gnn_trained_embedding has been deprecated.')
-     torch.cuda.empty_cache()
-     gnn_model = RelHetGraph(hidden_size, out_size, num_heads, sentence_in_size, word_in_size , feat_drop, attn_drop).to(device)
-     gnn_model.load_state_dict(torch.load('gnn_trained_weights.pth', weights_only=True))
-     gnn_model.eval()
-     
-     evl_dataset = EvalDataset(evl_data_path)
-     eval_dataloader = data_DataLoader(evl_dataset, batch_size=batch_size, shuffle=False, collate_fn=custom_collate_fn)
-     
-     output_embeddings = []
-     node_sent_maps = []
-     summary_list = []
-     with torch.no_grad():
-          for batch in eval_dataloader:
-               batch_graph_list, batch_map_list, batch_summary_list = batch
-
-               batch_graph = Batch.from_data_list(batch_graph_list).to(device)
-               sentence_feat = batch_graph['sentence'].x
-               word_feat = batch_graph['word'].x
-               
-               embeddings = gnn_model(batch_graph, sentence_feat, word_feat)
-               output_embeddings.append(embeddings)
-               node_sent_maps.append(batch_map_list)
-               summary_list.append(batch_summary_list)
-               
-               del batch_graph
-               clean_memory()
-
-     output_embeddings = torch.cat(output_embeddings, dim=0)
-     merged_node_map_list = [item for sublist in node_sent_maps for item in sublist]
-     merged_summary_list = [item for batch_sum in summary_list for item in batch_sum]
-
-     return output_embeddings, merged_node_map_list, merged_summary_list
 
 def chunked_cosine_similarity(embeddings, embedding_matrix, chunk_size=16):
      similarities = []

@@ -5,7 +5,7 @@ from pathlib import Path
 from datetime import datetime
 from enum import Enum
 
-parent_path = "/content/drive/MyDrive/checkpoints"
+parent_path = os.path.join("content", "drive", "MyDrive", "checkpoints")
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 class ModelCheckpointManager:

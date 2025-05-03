@@ -1,2 +1,4 @@
 data/
 notebook/
+content/
+# Ignore Jupyter Notebook checkpoints

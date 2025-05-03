@@ -19,7 +19,7 @@ class EarlyStopper:
                
                best_state_to_save = self.get_state()
 
-               print(f"[EarlyStopping] Validation loss improved to {val_loss:.4f}. Saving best model...")
+               print(f"[EarlyStop] Validation loss improved to {val_loss:.4f}. Saving best model...")
                save_kwargs = {
                     'epoch': epoch,
                     'models': models,
@@ -33,12 +33,12 @@ class EarlyStopper:
                     save_kwargs['global_step'] = global_step
 
                best_filepath = self.checkpoint_manager.save(**save_kwargs)
-               print(f"[EarlyStopping] Best model saved to {best_filepath}.")
+               print(f"[EarlyStop] Best model saved to {best_filepath}.")
           else:
                self.counter += 1
-               print(f"[EarlyStopping] No improvement for {self.counter}/{self.patience} epochs.")
+               print(f"[EarlyStop] No improvement for {self.counter}/{self.patience} epochs.")
                if self.counter >= self.patience:
-                    print("[EarlyStopping] Stopping training.")
+                    print("[EarlyStop] Stopping training.")
                     self.early_stop = True
           return self.early_stop
      
@@ -51,4 +51,4 @@ class EarlyStopper:
           self.best_loss = state_dict.get('best_loss', float('inf'))
           self.counter = state_dict.get('counter', 0)
           self.early_stop = False
-          print(f"[EarlyStopping] Loaded state: Best Loss = {self.best_loss:.4f}, Counter = {self.counter}")
+          print(f"[EarlyStop] Loaded state: Best Loss = {self.best_loss:.4f}, Counter = {self.counter}")

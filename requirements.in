@@ -11,3 +11,4 @@ datasets
 protobuf
 psutil
 faiss-gpu
+accelerate

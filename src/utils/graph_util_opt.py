@@ -9,6 +9,7 @@ import concurrent.futures
 import multiprocessing
 from tqdm import tqdm
 import time
+import traceback
 
 from models.CheckPointManager import DataCheckpointManager
 from utils.define_node import define_node_edge_opt_parallel
@@ -155,34 +156,39 @@ def parallel_create_graph(args):
      Takes a tuple of (word_node_map, sent_node_map, edges_data) as input.
      Ensures graph attributes are picklable.
      """
-     word_node_map, sent_node_map, edges_data = args
-     graph = nx.MultiDiGraph()
+     try:
+          word_node_map, sent_node_map, edges_data = args
+          graph = nx.MultiDiGraph()
 
-     # Add word nodes
-     word_nodes = [(w_node_id, {"type": "word", "text": word})
-                    for word, w_node_id in word_node_map.items()]
-     graph.add_nodes_from(word_nodes)
+          # Add word nodes
+          word_nodes = [(w_node_id, {"type": "word", "text": word})
+                         for word, w_node_id in word_node_map.items()]
+          graph.add_nodes_from(word_nodes)
 
-     # Add sentence nodes
-     sent_nodes = [(s_node_id, {"type": "sentence", "text": sent_triple})
-                    for sent_triple, s_node_id_list in sent_node_map.items()
-                    for s_node_id in s_node_id_list]
-     graph.add_nodes_from(sent_nodes)
+          # Add sentence nodes
+          sent_nodes = [(s_node_id, {"type": "sentence", "text": sent_triple})
+                         for sent_triple, s_node_id_list in sent_node_map.items()
+                         for s_node_id in s_node_id_list]
+          graph.add_nodes_from(sent_nodes)
 
-     # Add edges
-     edges = []
-     for (node1, node2), edge_list in edges_data.items():
-          for edge in edge_list:
-               edge_attr = {
-                    "edge_type": edge["type"],
-                    "weight": edge["weight"]
-               }
-               edges.append((node1, node2, edge_attr))
-               edges.append((node2, node1, edge_attr))
+          # Add edges
+          edges = []
+          for (node1, node2), edge_list in edges_data.items():
+               for edge in edge_list:
+                    edge_attr = {
+                         "edge_type": edge["type"],
+                         "weight": edge["weight"]
+                    }
+                    edges.append((node1, node2, edge_attr))
+                    edges.append((node2, node1, edge_attr))
 
-     graph.add_edges_from(edges)
+          graph.add_edges_from(edges)
+          
+          return graph
      
-     return graph
+     except Exception as e:
+          print(f"[ERROR] An exception occurred while creating graphs: {e}")
+          traceback.print_exc() 
 
 def embed_nodes_with_rel_pos(graphs, word_emb_batch_size=64, sentence_emb_batch_size=32):
      """embed nodes with explicit no positional encoding
@@ -194,115 +200,120 @@ def embed_nodes_with_rel_pos(graphs, word_emb_batch_size=64, sentence_emb_batch_
      embedded_graphs = []
      
      print(f"Embedding nodes on device: {device}")
-
-     with load_emb_models(models_info, device) as models:
-          main_transformer_model = models["main_transformer"].eval()
-          tokenizer = models["tokenizer"]
-          
-          try:
-               target_dim = main_transformer_model.config.hidden_size
-               if not isinstance(target_dim, int) or target_dim <= 0:
-                    raise ValueError("Invalid hidden_size")
-          except AttributeError:
-               raise ValueError("Could not determine hidden_size from main_transformer_model config.")
-
-          for i, graph in enumerate(tqdm(graphs, desc="Embedding Graphs")):
-               sentences_texts = []
-               sentence_node_ids = []
-               word_texts = []
-               word_node_ids = []
-
-               for node, data in graph.nodes(data=True):
-                    node_type = data.get('type')
-                    node_text_data = data.get('text')
-
-                    if node_type == 'sentence':
-                         sentences_texts.append(node_text_data[2])
-                         sentence_node_ids.append(node)
-                    elif node_type == 'word':
-                         word_texts.append(node_text_data)
-                         word_node_ids.append(node)
+     
+     try:
+          with load_emb_models(models_info, device) as models:
+               main_transformer_model = models["main_transformer"].eval()
+               tokenizer = models["tokenizer"]
                
-               # --- Sentence Embedding ---
-               final_sentence_embed_id_map = {}
-               if sentence_node_ids:
-                    all_sent_embeddings = []
-                    with torch.no_grad():
-                         for j in range(0, len(sentences_texts), sentence_emb_batch_size):
-                              batch_texts = sentences_texts[j : j + sentence_emb_batch_size]
+               try:
+                    target_dim = main_transformer_model.config.hidden_size
+                    if not isinstance(target_dim, int) or target_dim <= 0:
+                         raise ValueError("Invalid hidden_size")
+               except AttributeError:
+                    raise ValueError("Could not determine hidden_size from main_transformer_model config.")
 
-                              inputs = tokenizer(
-                                   batch_texts,
-                                   return_tensors='pt',
-                                   padding=True,
-                                   truncation=True,
-                                   max_length=main_transformer_model.config.max_position_embeddings # Use model's capacity
-                              ).to(device)
+               for i, graph in enumerate(tqdm(graphs, desc="Embedding Graphs",position=1)):
+                    sentences_texts = []
+                    sentence_node_ids = []
+                    word_texts = []
+                    word_node_ids = []
 
-                              outputs = main_transformer_model(**inputs)
-                              token_embeddings = outputs.last_hidden_state # shape: (batch, seq_len, hidden_size)
+                    for node, data in graph.nodes(data=True):
+                         node_type = data.get('type')
+                         node_text_data = data.get('text')
 
-                              # mean pool token embeddings (respecting padding) to get sentence embedding
-                              input_mask_expanded = inputs['attention_mask'].unsqueeze(-1).expand(token_embeddings.size()).float()
-                              sum_embeddings = torch.sum(token_embeddings * input_mask_expanded, 1)
-                              sum_mask = torch.clamp(input_mask_expanded.sum(1), min=1e-9)
-                              mean_pooled_embeddings = sum_embeddings / sum_mask # Shape: (batch, hidden_size)
-                              all_sent_embeddings.append(mean_pooled_embeddings)
-
-                    if all_sent_embeddings:
-                         final_main_sent_embeddings = torch.cat(all_sent_embeddings, dim=0)
+                         if node_type == 'sentence':
+                              sentences_texts.append(node_text_data[2])
+                              sentence_node_ids.append(node)
+                         elif node_type == 'word':
+                              word_texts.append(node_text_data)
+                              word_node_ids.append(node)
                     
-                    # Map embeddings directly to node IDs
-                    for idx, node_id in enumerate(sentence_node_ids):
-                         final_sentence_embed_id_map[node_id] = final_main_sent_embeddings[idx]
-               else:
-                    print(f"\nWarning: No sentence embeddings generated for graph {i} (List was empty).")
+                    # --- Sentence Embedding ---
+                    final_sentence_embed_id_map = {}
+                    if sentence_node_ids:
+                         all_sent_embeddings = []
+                         with torch.no_grad():
+                              for j in range(0, len(sentences_texts), sentence_emb_batch_size):
+                                   batch_texts = sentences_texts[j : j + sentence_emb_batch_size]
 
-               # --- Word Embedding ---
-               final_word_embed_id_map = {}
-               if word_node_ids:
-                    all_word_embeddings = []
-                    with torch.no_grad():
-                         for j in range(0, len(word_texts), word_emb_batch_size):
-                              batch_texts = word_texts[j : j + word_emb_batch_size]
+                                   inputs = tokenizer(
+                                        batch_texts,
+                                        return_tensors='pt',
+                                        padding=True,
+                                        truncation=True,
+                                        max_length=main_transformer_model.config.max_position_embeddings # Use model's capacity
+                                   ).to(device)
 
-                              inputs = tokenizer(
-                                   batch_texts, return_tensors='pt', padding=True, truncation=True,
-                                   max_length=main_transformer_model.config.max_position_embeddings
-                              ).to(device)
+                                   outputs = main_transformer_model(**inputs)
+                                   token_embeddings = outputs.last_hidden_state # shape: (batch, seq_len, hidden_size)
 
-                              outputs = main_transformer_model(**inputs)
-                              token_embeddings = outputs.last_hidden_state
-                              # Mean Pooling
-                              input_mask_expanded = inputs['attention_mask'].unsqueeze(-1).expand(token_embeddings.size()).float()
-                              sum_embeddings = torch.sum(token_embeddings * input_mask_expanded, 1)
-                              sum_mask = torch.clamp(input_mask_expanded.sum(1), min=1e-9)
-                              mean_pooled_embeddings = sum_embeddings / sum_mask
-                              all_word_embeddings.append(mean_pooled_embeddings)
+                                   # mean pool token embeddings (respecting padding) to get sentence embedding
+                                   input_mask_expanded = inputs['attention_mask'].unsqueeze(-1).expand(token_embeddings.size()).float()
+                                   sum_embeddings = torch.sum(token_embeddings * input_mask_expanded, 1)
+                                   sum_mask = torch.clamp(input_mask_expanded.sum(1), min=1e-9)
+                                   mean_pooled_embeddings = sum_embeddings / sum_mask # Shape: (batch, hidden_size)
+                                   all_sent_embeddings.append(mean_pooled_embeddings)
 
-                    if all_word_embeddings:
-                         final_word_embeddings = torch.cat(all_word_embeddings, dim=0)
+                         if all_sent_embeddings:
+                              final_main_sent_embeddings = torch.cat(all_sent_embeddings, dim=0)
+                         
+                         # Map embeddings directly to node IDs
+                         for idx, node_id in enumerate(sentence_node_ids):
+                              final_sentence_embed_id_map[node_id] = final_main_sent_embeddings[idx]
+                    else:
+                         print(f"\nWarning: No sentence embeddings generated for graph {i} (List was empty).")
 
-                    for idx, node_id in enumerate(word_node_ids):
-                         final_word_embed_id_map[node_id] = final_word_embeddings[idx]
-               else:
-                    print(f"\nWarning: No word embeddings generated for graph {i} (List was empty).")
+                    # --- Word Embedding ---
+                    final_word_embed_id_map = {}
+                    if word_node_ids:
+                         all_word_embeddings = []
+                         with torch.no_grad():
+                              for j in range(0, len(word_texts), word_emb_batch_size):
+                                   batch_texts = word_texts[j : j + word_emb_batch_size]
 
-               # --- Assign Embeddings to Graph Nodes ---
-               nodes_assigned_count = 0
-               for node_id, node_data in graph.nodes(data=True):
-                    if node_data.get('type') == 'sentence':
-                         if node_id in final_sentence_embed_id_map:
-                              graph.nodes[node_id]['embedding'] = final_sentence_embed_id_map[node_id]
-                              nodes_assigned_count += 1
-                    elif node_data.get('type') == 'word':
-                         if node_id in final_word_embed_id_map:
-                              graph.nodes[node_id]['embedding'] = final_word_embed_id_map[node_id]
-                              nodes_assigned_count += 1
+                                   inputs = tokenizer(
+                                        batch_texts, return_tensors='pt', padding=True, truncation=True,
+                                        max_length=main_transformer_model.config.max_position_embeddings
+                                   ).to(device)
 
-               embedded_graphs.append(graph)
+                                   outputs = main_transformer_model(**inputs)
+                                   token_embeddings = outputs.last_hidden_state
+                                   # Mean Pooling
+                                   input_mask_expanded = inputs['attention_mask'].unsqueeze(-1).expand(token_embeddings.size()).float()
+                                   sum_embeddings = torch.sum(token_embeddings * input_mask_expanded, 1)
+                                   sum_mask = torch.clamp(input_mask_expanded.sum(1), min=1e-9)
+                                   mean_pooled_embeddings = sum_embeddings / sum_mask
+                                   all_word_embeddings.append(mean_pooled_embeddings)
 
-     return embedded_graphs
+                         if all_word_embeddings:
+                              final_word_embeddings = torch.cat(all_word_embeddings, dim=0)
+
+                         for idx, node_id in enumerate(word_node_ids):
+                              final_word_embed_id_map[node_id] = final_word_embeddings[idx]
+                    else:
+                         print(f"\nWarning: No word embeddings generated for graph {i} (List was empty).")
+
+                    # --- Assign Embeddings to Graph Nodes ---
+                    nodes_assigned_count = 0
+                    for node_id, node_data in graph.nodes(data=True):
+                         if node_data.get('type') == 'sentence':
+                              if node_id in final_sentence_embed_id_map:
+                                   graph.nodes[node_id]['embedding'] = final_sentence_embed_id_map[node_id]
+                                   nodes_assigned_count += 1
+                         elif node_data.get('type') == 'word':
+                              if node_id in final_word_embed_id_map:
+                                   graph.nodes[node_id]['embedding'] = final_word_embed_id_map[node_id]
+                                   nodes_assigned_count += 1
+
+                    embedded_graphs.append(graph)
+
+          return embedded_graphs
+     
+     except Exception as e:
+          print(f"[ERROR] An exception occurred while embedding graphs: {e}")
+          traceback.print_exc()
      
      
 def embed_nodes_with_abs_pos(graphs, sentid_node_map_list, word_batch_size=64, sentence_batch_size=32):
@@ -432,101 +443,106 @@ def parallel_convert_graph(nx_graph):
      (with CPU embeddings) to a PyTorch Geometric HeteroData object (on CPU).
      Also generates necessary mappings.
      """
-     het_graph = HeteroData()
-     node_map = {}
+     try: 
+          het_graph = HeteroData()
+          node_map = {}
 
-     # --- 1. Process Nodes ---
-     sent_id = 0
-     word_id = 0
-     word_nodes_feat = []
-     word_texts = []
-     sent_nodes_feat = []
-     sent_texts = []
-     nx_id_to_text = {}
+          # --- 1. Process Nodes ---
+          sent_id = 0
+          word_id = 0
+          word_nodes_feat = []
+          word_texts = []
+          sent_nodes_feat = []
+          sent_texts = []
+          nx_id_to_text = {}
 
-     for node, data in nx_graph.nodes(data=True):
-          cur_type = data['type']
-          # Ensure embedding is on CPU (should be already if passed correctly)
-          embed = data.get('embedding', None)
-          if embed is not None:
-               embed = embed.cpu() 
-          else:
-               print(f"Warning: Node {node} of type {cur_type} has no 'embedding' attribute.")
-               pass
-
-          text = data['text']
-          nx_id_to_text[node] = text
-
-          if cur_type == 'word':
-               if embed is not None: word_nodes_feat.append(embed)
-               word_texts.append(str(text)) # Ensure text is string
-               node_map[node] = ('word', word_id)
-               word_id += 1
-          elif cur_type == 'sentence':
-               if embed is not None: sent_nodes_feat.append(embed)
-               sent_texts.append(str(text[2])) # Extract sentence string
-               node_map[node] = ('sentence', sent_id)
-               sent_id += 1
-
-     # Assign node features and text to HeteroData
-     if word_id > 0 and word_nodes_feat:
-          het_graph['word'].x = torch.stack(word_nodes_feat) # Should be CPU tensors
-     het_graph['word'].text = word_texts
-
-     if sent_id > 0 and sent_nodes_feat:
-          het_graph['sentence'].x = torch.stack(sent_nodes_feat) # Should be CPU tensors
-     het_graph['sentence'].text = sent_texts
-
-     # --- 2. Process Edges ---
-     similarity_edge_indices = []
-     similarity_edge_attrs = []
-     pro_ant_edge_indices = []
-     pro_ant_edge_attrs = []
-     sent_word_edge_indices = []
-     sent_word_edge_attrs = []
-     word_sent_edge_indices = []
-     word_sent_edge_attrs = []
-     for from_node, to_node, k, attr in nx_graph.edges(keys=True, data=True):
-          node_type_from, new_id_from = node_map[from_node]
-          node_type_to, new_id_to = node_map[to_node]
-          edge_tp = attr['edge_type']
-          weight = attr['weight']
-          if edge_tp == 'word_sent':
-               if node_type_from == 'sentence':
-                    sent_word_edge_indices.append([new_id_from, new_id_to])
-                    sent_word_edge_attrs.append([weight])
+          for node, data in nx_graph.nodes(data=True):
+               cur_type = data['type']
+               # Ensure embedding is on CPU (should be already if passed correctly)
+               embed = data.get('embedding', None)
+               if embed is not None:
+                    embed = embed.cpu() 
                else:
-                    word_sent_edge_indices.append([new_id_from, new_id_to])
-                    word_sent_edge_attrs.append([weight])
-          elif edge_tp == 'pronoun_antecedent':
-               pro_ant_edge_indices.append([new_id_from, new_id_to])
-               pro_ant_edge_attrs.append([weight])
-          elif edge_tp == 'similarity':
-               similarity_edge_indices.append([new_id_from, new_id_to])
-               similarity_edge_attrs.append([weight])
-     
-     het_graph['sentence', 'similarity', 'sentence'].edge_index = torch.tensor(similarity_edge_indices).t().to(torch.int64)
-     het_graph['sentence', 'similarity', 'sentence'].edge_attr = torch.tensor(similarity_edge_attrs)
-     het_graph['sentence', 'pro_ant', 'sentence'].edge_index = torch.tensor(pro_ant_edge_indices).t().to(torch.int64)
-     het_graph['sentence', 'pro_ant', 'sentence'].edge_attr = torch.tensor(pro_ant_edge_attrs)
-     het_graph['sentence', 'has', 'word'].edge_index = torch.tensor(sent_word_edge_indices).t().to(torch.int64)
-     het_graph['sentence', 'has', 'word'].edge_attr = torch.tensor(sent_word_edge_attrs)
-     het_graph['word', 'in', 'sentence'].edge_index = torch.tensor(word_sent_edge_indices).t().to(torch.int64)
-     het_graph['word', 'in', 'sentence'].edge_attr = torch.tensor(sent_word_edge_attrs)
-     
-     # --- 3. Generate Mappings ---
-     # Mapping from new pyg sentence id -> sentence text
-     pyg_id_to_sent_txt_map = {}
-     for old_node in nx_graph.nodes():
-          attributes = nx_graph.nodes[old_node]
-          if not attributes['type'] == 'sentence': continue
+                    print(f"Warning: Node {node} of type {cur_type} has no 'embedding' attribute.")
+                    pass
+
+               text = data['text']
+               nx_id_to_text[node] = text
+
+               if cur_type == 'word':
+                    if embed is not None: word_nodes_feat.append(embed)
+                    word_texts.append(str(text)) # Ensure text is string
+                    node_map[node] = ('word', word_id)
+                    word_id += 1
+               elif cur_type == 'sentence':
+                    if embed is not None: sent_nodes_feat.append(embed)
+                    sent_texts.append(str(text[2])) # Extract sentence string
+                    node_map[node] = ('sentence', sent_id)
+                    sent_id += 1
+
+          # Assign node features and text to HeteroData
+          if word_id > 0 and word_nodes_feat:
+               het_graph['word'].x = torch.stack(word_nodes_feat) # Should be CPU tensors
+          het_graph['word'].text = word_texts
+
+          if sent_id > 0 and sent_nodes_feat:
+               het_graph['sentence'].x = torch.stack(sent_nodes_feat) # Should be CPU tensors
+          het_graph['sentence'].text = sent_texts
+
+          # --- 2. Process Edges ---
+          similarity_edge_indices = []
+          similarity_edge_attrs = []
+          pro_ant_edge_indices = []
+          pro_ant_edge_attrs = []
+          sent_word_edge_indices = []
+          sent_word_edge_attrs = []
+          word_sent_edge_indices = []
+          word_sent_edge_attrs = []
+          for from_node, to_node, k, attr in nx_graph.edges(keys=True, data=True):
+               node_type_from, new_id_from = node_map[from_node]
+               node_type_to, new_id_to = node_map[to_node]
+               edge_tp = attr['edge_type']
+               weight = attr['weight']
+               if edge_tp == 'word_sent':
+                    if node_type_from == 'sentence':
+                         sent_word_edge_indices.append([new_id_from, new_id_to])
+                         sent_word_edge_attrs.append([weight])
+                    else:
+                         word_sent_edge_indices.append([new_id_from, new_id_to])
+                         word_sent_edge_attrs.append([weight])
+               elif edge_tp == 'pronoun_antecedent':
+                    pro_ant_edge_indices.append([new_id_from, new_id_to])
+                    pro_ant_edge_attrs.append([weight])
+               elif edge_tp == 'similarity':
+                    similarity_edge_indices.append([new_id_from, new_id_to])
+                    similarity_edge_attrs.append([weight])
           
-          sent_txt = attributes['text'][2] ## only sentence text needed
-          new_node_type, new_node_id = node_map[old_node]
-          pyg_id_to_sent_txt_map[new_node_id] = sent_txt
+          het_graph['sentence', 'similarity', 'sentence'].edge_index = torch.tensor(similarity_edge_indices).t().to(torch.int64)
+          het_graph['sentence', 'similarity', 'sentence'].edge_attr = torch.tensor(similarity_edge_attrs)
+          het_graph['sentence', 'pro_ant', 'sentence'].edge_index = torch.tensor(pro_ant_edge_indices).t().to(torch.int64)
+          het_graph['sentence', 'pro_ant', 'sentence'].edge_attr = torch.tensor(pro_ant_edge_attrs)
+          het_graph['sentence', 'has', 'word'].edge_index = torch.tensor(sent_word_edge_indices).t().to(torch.int64)
+          het_graph['sentence', 'has', 'word'].edge_attr = torch.tensor(sent_word_edge_attrs)
+          het_graph['word', 'in', 'sentence'].edge_index = torch.tensor(word_sent_edge_indices).t().to(torch.int64)
+          het_graph['word', 'in', 'sentence'].edge_attr = torch.tensor(sent_word_edge_attrs)
+          
+          # --- 3. Generate Mappings ---
+          # Mapping from new pyg sentence id -> sentence text
+          pyg_id_to_sent_txt_map = {}
+          for old_node in nx_graph.nodes():
+               attributes = nx_graph.nodes[old_node]
+               if not attributes['type'] == 'sentence': continue
+               
+               sent_txt = attributes['text'][2] ## only sentence text needed
+               new_node_type, new_node_id = node_map[old_node]
+               pyg_id_to_sent_txt_map[new_node_id] = sent_txt
+          
+
+          return het_graph, pyg_id_to_sent_txt_map
      
-     # Return the PyG graph (on CPU) and the necessary mappings
-     return het_graph, pyg_id_to_sent_txt_map
+     except Exception as e:
+          print(f"[ERROR] An exception occurred while converting graphs: {e}")
+          traceback.print_exc()
 
 def create_embed_graphs_opt(docs_list, sent_similarity=0.6):
      """
