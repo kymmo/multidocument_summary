@@ -527,7 +527,7 @@ def parallel_convert_graph(nx_graph):
           het_graph['sentence', 'has', 'word'].edge_attr = torch.tensor(sent_word_edge_attrs)
           het_graph['word', 'in', 'sentence'].edge_index = torch.tensor(word_sent_edge_indices).t().to(torch.int64)
           het_graph['word', 'in', 'sentence'].edge_attr = torch.tensor(sent_word_edge_attrs)
-          
+                    
           # --- 3. Generate Mappings ---
           # Mapping from new pyg sentence id -> sentence text
           pyg_id_to_sent_txt_map = {}
@@ -539,6 +539,10 @@ def parallel_convert_graph(nx_graph):
                new_node_type, new_node_id = node_map[old_node]
                pyg_id_to_sent_txt_map[new_node_id] = sent_txt
           
+          del word_nodes_feat, sent_nodes_feat, word_texts, sent_texts, nx_id_to_text
+          del similarity_edge_indices, similarity_edge_attrs, pro_ant_edge_indices, pro_ant_edge_attrs
+          del sent_word_edge_indices, sent_word_edge_attrs, word_sent_edge_indices, word_sent_edge_attrs
+          clean_memory()
 
           return het_graph, pyg_id_to_sent_txt_map
      
@@ -717,12 +721,11 @@ def get_embedded_pyg_graphs(dataset_type, docs_list, sent_similarity):
                num_workers = auto_workers()
                pool_args = list(zip(word_nodeId_list, sent_nodeId_list, edge_data_list))
 
+               graph_list = []
                if num_items > 0:
                     with multiprocessing.get_context("spawn").Pool(num_workers) as pool:
-                         graph_list = list(tqdm(pool.imap(parallel_create_graph, pool_args), total=num_items,
-                                             desc=f"Creating NX Graphs for {dataset_type} dataset"))
-               else:
-                    graph_list = []
+                         for nx_graph in tqdm(pool.imap(parallel_create_graph, pool_args), total=num_items, desc="Creating NX Graphs"):
+                              graph_list.append(nx_graph)
 
                data_cpt.save_step(step_name=graph_create_key, data={'graph_list': graph_list}, dataset_type=dataset_type)
                print(f"Step 2 finished in {time.time() - start_time:.2f}s for {dataset_type} dataset")
@@ -736,12 +739,11 @@ def get_embedded_pyg_graphs(dataset_type, docs_list, sent_similarity):
                          sentid_node_map_list = define_data['sentid_node_map_list']
           
      # --- Step 3: Embed Graph Nodes (Batched, on GPU) ---
-     embedded_graph_list = None  # This will hold graphs with CPU embeddings for saving/conversion
+     embedded_graph_list = None
      if not latest_step or latest_step in [define_node_key, graph_create_key, embed_graph_key]:
           if not latest_step or latest_step != embed_graph_key:  # Run if starting or finished step 1 or 2
                print(f"Step 3: Embedding graph nodes for {dataset_type} dataset...")
                start_time = time.time()
-               # embedded_graphs_gpu = embed_nodes_with_abs_pos(graph_list, sentid_node_map_list)
                embedded_graphs_gpu = embed_nodes_with_rel_pos(graph_list)
 
                ## transfers to cpu
@@ -781,15 +783,28 @@ def get_embedded_pyg_graphs(dataset_type, docs_list, sent_similarity):
                node_sent_map_list = []
 
                num_items = len(embedded_graph_list)
-               num_workers = auto_workers()
+               num_workers = (auto_workers() // 2) + 1 # for saving memory
 
                if num_items > 0:
-                    # Use multiprocessing Pool with imap for ordered results
-                    with multiprocessing.get_context("spawn").Pool(num_workers) as pool:
-                         results = list(tqdm(pool.imap(parallel_convert_graph, embedded_graph_list), total=num_items, desc="Converting to PyG"))
+                    failed = []
 
-                    pyg_graph_list_cpu = [res[0] for res in results]
-                    node_sent_map_list = [res[1] for res in results]
+                    with multiprocessing.get_context("spawn").Pool(num_workers) as pool, \
+                         tqdm(total=num_items, desc="Converting to PyG") as pbar:
+                    
+                         for idx, res in enumerate(pool.imap(parallel_convert_graph, embedded_graph_list)):
+                              if isinstance(res, Exception):
+                                   failed.append(idx)
+                                   pyg_graph_list_cpu.append(None)
+                                   node_sent_map_list.append(None)
+                              else:
+                                   pyg_graph_list_cpu.append(res[0])
+                                   node_sent_map_list.append(res[1])
+                              
+                              pbar.update()
+
+                    if failed:
+                         print(f"{len(failed)} failures at: {failed}")
+                         
                else:
                     pyg_graph_list_cpu = []
                     node_sent_map_list = []
