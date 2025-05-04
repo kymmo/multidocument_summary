@@ -773,6 +773,7 @@ def get_embedded_pyg_graphs(dataset_type, docs_list, sent_similarity):
      ## clean up memory regularly
      clean_memory()
      
+     torch.multiprocessing.set_sharing_strategy('file_system')
      # --- Step 4: Convert to PyG HeteroData (Parallel) ---
      node_sent_map_list = None
      if not latest_step or latest_step in [define_node_key, graph_create_key, embed_graph_key, final_graph_key]:
