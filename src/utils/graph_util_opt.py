@@ -5,11 +5,12 @@ from transformers import AutoModel, AutoTokenizer
 from sentence_transformers import SentenceTransformer
 from torch_geometric.data import HeteroData
 from contextlib import contextmanager
-import concurrent.futures
+import numpy as np
 import multiprocessing
 from tqdm.auto import tqdm
 import time
 import traceback
+import torch.multiprocessing as mp
 
 from models.CheckPointManager import DataCheckpointManager
 from utils.define_node import define_node_edge_opt_parallel
@@ -438,97 +439,106 @@ def embed_nodes_with_abs_pos(graphs, sentid_node_map_list, word_batch_size=64, s
 
      return embedded_graphs
 
-
-def parallel_convert_graph(nx_graph):
+def parallel_convert_graph_serializable(nx_graph):
      """
      Worker function for multiprocessing: Converts a single NetworkX graph
      (with CPU embeddings) to a PyTorch Geometric HeteroData object (on CPU).
      Also generates necessary mappings.
      """
-     try: 
-          het_graph = HeteroData()
-          node_map = {}
 
-          # --- 1. Process Nodes ---
-          sent_id = 0
-          word_id = 0
-          word_nodes_feat = []
-          word_texts = []
-          sent_nodes_feat = []
-          sent_texts = []
-          nx_id_to_text = {}
-
+     node_map = {}
+     sent_id = 0
+     word_id = 0
+     word_nodes_feat = []
+     word_texts = []
+     sent_nodes_feat = []
+     sent_texts = []
+     
+     try:
           for node, data in nx_graph.nodes(data=True):
                cur_type = data['type']
-               # Ensure embedding is on CPU (should be already if passed correctly)
                embed = data.get('embedding', None)
                if embed is not None:
-                    embed = embed.cpu() 
+                    embed = embed.cpu()
                else:
                     print(f"Warning: Node {node} of type {cur_type} has no 'embedding' attribute.")
                     pass
-
                text = data['text']
-               nx_id_to_text[node] = text
-
                if cur_type == 'word':
-                    if embed is not None: word_nodes_feat.append(embed)
-                    word_texts.append(str(text)) # Ensure text is string
+                    if embed is not None:
+                         word_nodes_feat.append(embed)
+                    word_texts.append(str(text))
                     node_map[node] = ('word', word_id)
                     word_id += 1
                elif cur_type == 'sentence':
-                    if embed is not None: sent_nodes_feat.append(embed)
-                    sent_texts.append(str(text[2])) # Extract sentence string
+                    if embed is not None:
+                         sent_nodes_feat.append(embed)
+                    sent_texts.append(str(text[2]))
                     node_map[node] = ('sentence', sent_id)
                     sent_id += 1
 
-          # Assign node features and text to HeteroData
-          if word_id > 0 and word_nodes_feat:
-               het_graph['word'].x = torch.stack(word_nodes_feat) # Should be CPU tensors
-          het_graph['word'].text = word_texts
+          serializable_graph_data = {
+               'node_types': {},
+               'edge_types': {}
+          }
 
-          if sent_id > 0 and sent_nodes_feat:
-               het_graph['sentence'].x = torch.stack(sent_nodes_feat) # Should be CPU tensors
-          het_graph['sentence'].text = sent_texts
+          if word_id > 0:
+               serializable_graph_data['node_types']['word'] = {'text': word_texts}
+               if word_nodes_feat:
+                    serializable_graph_data['node_types']['word']['x'] = torch.stack(sent_nodes_feat).numpy()
 
-          # --- 2. Process Edges ---
-          similarity_edge_indices = []
-          similarity_edge_attrs = []
-          pro_ant_edge_indices = []
-          pro_ant_edge_attrs = []
-          sent_word_edge_indices = []
-          sent_word_edge_attrs = []
-          word_sent_edge_indices = []
-          word_sent_edge_attrs = []
+          if sent_id > 0:
+               serializable_graph_data['node_types']['sentence'] = {'text': sent_texts}
+               if sent_nodes_feat:
+                    serializable_graph_data['node_types']['sentence']['x'] = torch.stack(sent_nodes_feat).numpy()
+
+          edge_data_temp = {
+               ('sentence', 'similarity', 'sentence'): {'indices': [], 'attrs': []},
+               ('sentence', 'pro_ant', 'sentence'): {'indices': [], 'attrs': []},
+               ('sentence', 'has', 'word'): {'indices': [], 'attrs': []},
+               ('word', 'in', 'sentence'): {'indices': [], 'attrs': []},
+          }
+
           for from_node, to_node, k, attr in nx_graph.edges(keys=True, data=True):
+               if from_node not in node_map or to_node not in node_map:
+                    print(f"Warning: Skipping edge ({from_node}, {to_node}) due to missing node in node_map.")
+                    continue
+
                node_type_from, new_id_from = node_map[from_node]
                node_type_to, new_id_to = node_map[to_node]
-               edge_tp = attr['edge_type']
-               weight = attr['weight']
-               if edge_tp == 'word_sent':
+               edge_tp_attr = attr.get('edge_type')
+               weight = attr.get('weight', 1.0)
+
+               current_edge_key = None
+               if edge_tp_attr == 'word_sent':
                     if node_type_from == 'sentence':
-                         sent_word_edge_indices.append([new_id_from, new_id_to])
-                         sent_word_edge_attrs.append([weight])
+                         current_edge_key = ('sentence', 'has', 'word')
                     else:
-                         word_sent_edge_indices.append([new_id_from, new_id_to])
-                         word_sent_edge_attrs.append([weight])
-               elif edge_tp == 'pronoun_antecedent':
-                    pro_ant_edge_indices.append([new_id_from, new_id_to])
-                    pro_ant_edge_attrs.append([weight])
-               elif edge_tp == 'similarity':
-                    similarity_edge_indices.append([new_id_from, new_id_to])
-                    similarity_edge_attrs.append([weight])
-          
-          het_graph['sentence', 'similarity', 'sentence'].edge_index = torch.tensor(similarity_edge_indices).t().to(torch.int64)
-          het_graph['sentence', 'similarity', 'sentence'].edge_attr = torch.tensor(similarity_edge_attrs)
-          het_graph['sentence', 'pro_ant', 'sentence'].edge_index = torch.tensor(pro_ant_edge_indices).t().to(torch.int64)
-          het_graph['sentence', 'pro_ant', 'sentence'].edge_attr = torch.tensor(pro_ant_edge_attrs)
-          het_graph['sentence', 'has', 'word'].edge_index = torch.tensor(sent_word_edge_indices).t().to(torch.int64)
-          het_graph['sentence', 'has', 'word'].edge_attr = torch.tensor(sent_word_edge_attrs)
-          het_graph['word', 'in', 'sentence'].edge_index = torch.tensor(word_sent_edge_indices).t().to(torch.int64)
-          het_graph['word', 'in', 'sentence'].edge_attr = torch.tensor(sent_word_edge_attrs)
-                    
-          # --- 3. Generate Mappings ---
+                         current_edge_key = ('word', 'in', 'sentence')
+               elif edge_tp_attr == 'pronoun_antecedent':
+                    current_edge_key = ('sentence', 'pro_ant', 'sentence')
+               elif edge_tp_attr == 'similarity':
+                    current_edge_key = ('sentence', 'similarity', 'sentence')
+
+               if current_edge_key and current_edge_key in edge_data_temp:
+                    edge_data_temp[current_edge_key]['indices'].append([new_id_from, new_id_to])
+                    edge_data_temp[current_edge_key]['attrs'].append([weight])
+               else:
+                    print(f"Warning: Unhandled or unknown edge type '{edge_tp_attr}' or key '{current_edge_key}'")
+
+
+          def _build_edge_index_numpy(edge_list):
+               if not edge_list:
+                    return np.empty((2, 0), dtype=np.int64)
+               return np.array(edge_list, dtype=np.int64).T
+
+          for edge_key_tuple, data in edge_data_temp.items():
+               if data['indices']:
+                    serializable_graph_data['edge_types'][edge_key_tuple] = {
+                         'edge_index': _build_edge_index_numpy(data['indices']),
+                         'edge_attr': np.array(data['attrs'], dtype=np.float32)
+                    }
+
           # Mapping from new pyg sentence id -> sentence text
           pyg_id_to_sent_txt_map = {}
           for old_node in nx_graph.nodes():
@@ -539,12 +549,10 @@ def parallel_convert_graph(nx_graph):
                new_node_type, new_node_id = node_map[old_node]
                pyg_id_to_sent_txt_map[new_node_id] = sent_txt
           
-          del word_nodes_feat, sent_nodes_feat, word_texts, sent_texts, nx_id_to_text
-          del similarity_edge_indices, similarity_edge_attrs, pro_ant_edge_indices, pro_ant_edge_attrs
-          del sent_word_edge_indices, sent_word_edge_attrs, word_sent_edge_indices, word_sent_edge_attrs
-          clean_memory()
+          
+          del word_nodes_feat, sent_nodes_feat, word_texts, sent_texts, edge_data_temp, node_map
 
-          return het_graph, pyg_id_to_sent_txt_map
+          return serializable_graph_data, pyg_id_to_sent_txt_map
      
      except Exception as e:
           print(f"[ERROR] An exception occurred while converting graphs: {e}")
@@ -663,7 +671,7 @@ def create_embed_graphs_opt(docs_list, sent_similarity=0.6):
      if num_items > 0:
           # Use multiprocessing Pool with imap for ordered results
           with multiprocessing.get_context("spawn").Pool(num_workers) as pool:
-               results = list(tqdm(pool.imap(parallel_convert_graph, embedded_graph_list), total=num_items, desc="Converting to PyG"))
+               results = list(tqdm(pool.imap(parallel_convert_graph_serializable, embedded_graph_list), total=num_items, desc="Converting to PyG"))
 
           pyg_graph_list_cpu = [res[0] for res in results]
           node_sent_map_list = [res[1] for res in results]
@@ -748,9 +756,8 @@ def get_embedded_pyg_graphs(dataset_type, docs_list, sent_similarity):
 
                ## transfers to cpu
                print(f"Moving embeddings to CPU for checkpointing/conversion for {dataset_type} dataset...")
-               embedded_graph_list = []  # This will store graphs with CPU embeddings
+               embedded_graph_list = []
                for g in embedded_graphs_gpu:
-                    # modify in place for efficiency
                     for node, data in g.nodes(data=True):
                          if 'embedding' in data and isinstance(data['embedding'], torch.Tensor):
                               data['embedding'] = data['embedding'].detach().cpu()
@@ -772,8 +779,7 @@ def get_embedded_pyg_graphs(dataset_type, docs_list, sent_similarity):
 
      ## clean up memory regularly
      clean_memory()
-     
-     torch.multiprocessing.set_sharing_strategy('file_system')
+          
      # --- Step 4: Convert to PyG HeteroData (Parallel) ---
      node_sent_map_list = None
      if not latest_step or latest_step in [define_node_key, graph_create_key, embed_graph_key, final_graph_key]:
@@ -783,25 +789,43 @@ def get_embedded_pyg_graphs(dataset_type, docs_list, sent_similarity):
                pyg_graph_list_cpu = []
                node_sent_map_list = []
 
+               num_workers = min(4, (auto_workers() // 2) + 1) # for saving memory
                num_items = len(embedded_graph_list)
-               num_workers = (auto_workers() // 2) + 1 # for saving memory
-
                if num_items > 0:
                     failed = []
-
                     with multiprocessing.get_context("spawn").Pool(num_workers) as pool, \
                          tqdm(total=num_items, desc="Converting to PyG") as pbar:
                     
-                         for idx, res in enumerate(pool.imap(parallel_convert_graph, embedded_graph_list)):
+                         for idx, res in enumerate(pool.imap(parallel_convert_graph_serializable, embedded_graph_list)):
                               if isinstance(res, Exception):
                                    failed.append(idx)
                                    pyg_graph_list_cpu.append(None)
                                    node_sent_map_list.append(None)
                               else:
-                                   pyg_graph_list_cpu.append(res[0])
-                                   node_sent_map_list.append(res[1])
+                                   serializable_graph_data, pyg_id_to_sent_txt_map = res
+                                   
+                                   ## convert to hetero data
+                                   het_graph = HeteroData()
+
+                                   # Process Node Types
+                                   for node_type, node_data in serializable_graph_data['node_types'].items():
+                                        if 'text' in node_data:
+                                             het_graph[node_type].text = node_data['text']
+                                        if 'x' in node_data:
+                                             het_graph[node_type].x = torch.from_numpy(node_data['x'])
+                                   
+                                   # Process Edge Types
+                                   for edge_key_tuple, edge_data in serializable_graph_data['edge_types'].items():
+                                        het_graph[edge_key_tuple].edge_index = torch.from_numpy(edge_data['edge_index'])
+                                        het_graph[edge_key_tuple].edge_attr = torch.from_numpy(edge_data['edge_attr'])
+
+                                   pyg_graph_list_cpu.append(het_graph)
+                                   node_sent_map_list.append(pyg_id_to_sent_txt_map)
                               
                               pbar.update()
+                              
+                              if idx % 100 == 0:
+                                   clean_memory()
 
                     if failed:
                          print(f"{len(failed)} failures at: {failed}")
