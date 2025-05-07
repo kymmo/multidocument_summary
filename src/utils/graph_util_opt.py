@@ -551,7 +551,8 @@ def parallel_convert_graph_serializable(nx_graph):
           
           
           del word_nodes_feat, sent_nodes_feat, word_texts, sent_texts, edge_data_temp, node_map
-
+          clean_memory()
+          
           return serializable_graph_data, pyg_id_to_sent_txt_map
      
      except Exception as e:
@@ -789,46 +790,46 @@ def get_embedded_pyg_graphs(dataset_type, docs_list, sent_similarity):
                pyg_graph_list_cpu = []
                node_sent_map_list = []
 
-               num_workers = min(4, (auto_workers() // 2) + 1) # for saving memory
+               num_workers = min(3, (auto_workers() // 2) + 1) # for saving memory
                num_items = len(embedded_graph_list)
                if num_items > 0:
-                    failed = []
+                    batch_size = 3 ### test!
                     with multiprocessing.get_context("spawn").Pool(num_workers) as pool, \
                          tqdm(total=num_items, desc="Converting to PyG") as pbar:
-                    
-                         for idx, res in enumerate(pool.imap(parallel_convert_graph_serializable, embedded_graph_list)):
-                              if isinstance(res, Exception):
-                                   failed.append(idx)
-                                   pyg_graph_list_cpu.append(None)
-                                   node_sent_map_list.append(None)
-                              else:
-                                   serializable_graph_data, pyg_id_to_sent_txt_map = res
-                                   
-                                   ## convert to hetero data
-                                   het_graph = HeteroData()
 
-                                   # Process Node Types
-                                   for node_type, node_data in serializable_graph_data['node_types'].items():
-                                        if 'text' in node_data:
-                                             het_graph[node_type].text = node_data['text']
-                                        if 'x' in node_data:
-                                             het_graph[node_type].x = torch.from_numpy(node_data['x'])
-                                   
-                                   # Process Edge Types
-                                   for edge_key_tuple, edge_data in serializable_graph_data['edge_types'].items():
-                                        het_graph[edge_key_tuple].edge_index = torch.from_numpy(edge_data['edge_index'])
-                                        het_graph[edge_key_tuple].edge_attr = torch.from_numpy(edge_data['edge_attr'])
-
-                                   pyg_graph_list_cpu.append(het_graph)
-                                   node_sent_map_list.append(pyg_id_to_sent_txt_map)
+                         for i in range(0, num_items, batch_size):
+                              batch = embedded_graph_list[i:i + batch_size]
+                              results = list(pool.imap(parallel_convert_graph_serializable, batch))
                               
-                              pbar.update()
-                              
-                              if idx % 100 == 0:
-                                   clean_memory()
+                              for res in results:
+                                   if isinstance(res, Exception):
+                                        pyg_graph_list_cpu.append(None)
+                                        node_sent_map_list.append(None)
+                                   else:
+                                        serializable_graph_data, pyg_id_to_sent_txt_map = res
+                                        
+                                        ## convert to hetero data
+                                        het_graph = HeteroData()
 
-                    if failed:
-                         print(f"{len(failed)} failures at: {failed}")
+                                        # Process Node Types
+                                        for node_type, node_data in serializable_graph_data['node_types'].items():
+                                             if 'text' in node_data:
+                                                  het_graph[node_type].text = node_data['text']
+                                             if 'x' in node_data:
+                                                  het_graph[node_type].x = torch.from_numpy(node_data['x'])
+                                        
+                                        # Process Edge Types
+                                        for edge_key_tuple, edge_data in serializable_graph_data['edge_types'].items():
+                                             het_graph[edge_key_tuple].edge_index = torch.from_numpy(edge_data['edge_index'])
+                                             het_graph[edge_key_tuple].edge_attr = torch.from_numpy(edge_data['edge_attr'])
+
+                                        pyg_graph_list_cpu.append(het_graph)
+                                        node_sent_map_list.append(pyg_id_to_sent_txt_map)
+                                   
+                                   pbar.update()
+                              
+                              del batch, results, serializable_graph_data, pyg_id_to_sent_txt_map
+                              clean_memory()
                          
                else:
                     pyg_graph_list_cpu = []
