@@ -10,7 +10,6 @@ import multiprocessing
 from tqdm.auto import tqdm
 import time
 import traceback
-import torch.multiprocessing as mp
 
 from models.CheckPointManager import DataCheckpointManager
 from utils.define_node import define_node_edge_opt_parallel
@@ -485,7 +484,7 @@ def parallel_convert_graph_serializable(nx_graph):
           if word_id > 0:
                serializable_graph_data['node_types']['word'] = {'text': word_texts}
                if word_nodes_feat:
-                    serializable_graph_data['node_types']['word']['x'] = torch.stack(sent_nodes_feat).numpy()
+                    serializable_graph_data['node_types']['word']['x'] = torch.stack(word_nodes_feat).numpy()
 
           if sent_id > 0:
                serializable_graph_data['node_types']['sentence'] = {'text': sent_texts}
@@ -686,8 +685,6 @@ def create_embed_graphs_opt(docs_list, sent_similarity=0.6):
 def get_embedded_pyg_graphs(dataset_type, docs_list, sent_similarity):
      data_cpt = DataCheckpointManager()
      
-     mp.set_sharing_strategy('file_descriptor') ## bypass shared-memory
-
      if (latest_step := data_cpt.get_latest_step(dataset_type = dataset_type)):
           print(f"Resume from step: [{latest_step}] for {dataset_type} dataset")
      else:
@@ -795,7 +792,7 @@ def get_embedded_pyg_graphs(dataset_type, docs_list, sent_similarity):
                num_workers = min(2, (auto_workers() // 2) + 1) # for saving memory
                num_items = len(embedded_graph_list)
                if num_items > 0:
-                    batch_size = 60
+                    batch_size = 30
                     with multiprocessing.get_context("spawn").Pool(num_workers) as pool, \
                          tqdm(total=num_items, desc="Converting to PyG") as pbar:
 

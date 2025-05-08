@@ -34,7 +34,8 @@ def train_gnn(file_path, hidden_size, out_size, num_heads, val_file_path, t5_mod
           train_dataset,
           batch_size=batch_size,
           shuffle=True,
-          pin_memory=False
+          pin_memory=False,
+          num_workers=0,
      )
      
      val_dataset = OptimizedDataset(file_path=val_file_path, dataset_type=data_cpt.DataType.VALIDATION.value, sent_similarity=sent_similarity_threshold)
@@ -42,7 +43,8 @@ def train_gnn(file_path, hidden_size, out_size, num_heads, val_file_path, t5_mod
           val_dataset,
           batch_size=batch_size,
           shuffle=False, # No shuffle for validation
-          pin_memory=False
+          pin_memory=False,
+          num_workers=0,
      )
      
      projector_hidden_size = 1024
