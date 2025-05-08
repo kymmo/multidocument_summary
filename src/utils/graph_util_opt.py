@@ -789,16 +789,16 @@ def get_embedded_pyg_graphs(dataset_type, docs_list, sent_similarity):
                pyg_graph_list_cpu = []
                node_sent_map_list = []
 
-               num_workers = min(2, (auto_workers() // 2) + 1) # for saving memory
+               num_workers = min(2, auto_workers()) # for saving memory
                num_items = len(embedded_graph_list)
                if num_items > 0:
-                    batch_size = 30
+                    batch_size = 10
                     with multiprocessing.get_context("spawn").Pool(num_workers) as pool, \
                          tqdm(total=num_items, desc="Converting to PyG") as pbar:
 
                          for i in range(0, num_items, batch_size):
                               batch = embedded_graph_list[i:i + batch_size]
-                              results = list(pool.imap(parallel_convert_graph_serializable, batch))
+                              results = list(pool.imap(parallel_convert_graph_serializable, batch, chunksize=2))
                               
                               for res in results:
                                    if isinstance(res, Exception):
