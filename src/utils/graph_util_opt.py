@@ -685,6 +685,8 @@ def create_embed_graphs_opt(docs_list, sent_similarity=0.6):
 
 def get_embedded_pyg_graphs(dataset_type, docs_list, sent_similarity):
      data_cpt = DataCheckpointManager()
+     
+     mp.set_sharing_strategy('file_descriptor') ## bypass shared-memory
 
      if (latest_step := data_cpt.get_latest_step(dataset_type = dataset_type)):
           print(f"Resume from step: [{latest_step}] for {dataset_type} dataset")
