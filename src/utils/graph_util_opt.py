@@ -439,7 +439,7 @@ def embed_nodes_with_abs_pos(graphs, sentid_node_map_list, word_batch_size=64, s
 
      return embedded_graphs
 
-@ResourceMonitor(interval=2, label="TRAIN") ##### test!
+@ResourceMonitor(interval=10, label="TRAIN") ##### test!
 def parallel_convert_graph_serializable(nx_graph):
      """
      Worker function for multiprocessing: Converts a single NetworkX graph
