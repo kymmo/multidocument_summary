@@ -34,7 +34,7 @@ def train_gnn(file_path, hidden_size, out_size, num_heads, val_file_path, t5_mod
           train_dataset,
           batch_size=batch_size,
           shuffle=True,
-          pin_memory=False,
+          pin_memory=True,
           num_workers=0,
      )
      
@@ -43,7 +43,7 @@ def train_gnn(file_path, hidden_size, out_size, num_heads, val_file_path, t5_mod
           val_dataset,
           batch_size=batch_size,
           shuffle=False, # No shuffle for validation
-          pin_memory=False,
+          pin_memory=True,
           num_workers=0,
      )
      

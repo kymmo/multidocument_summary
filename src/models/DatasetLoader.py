@@ -27,7 +27,6 @@ class EvalDataset(Dataset):
 
 class OptimizedDataset(Dataset):
      def __init__(self, file_path, dataset_type, sent_similarity):
-          mp.set_sharing_strategy('file_system')
           self.file_path = file_path
           self.data = None
           self._lock = mp.Lock()
