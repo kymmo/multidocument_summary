@@ -12,3 +12,4 @@ protobuf
 psutil
 faiss-gpu
 accelerate
+pynvml

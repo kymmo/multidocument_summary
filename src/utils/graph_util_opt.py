@@ -14,6 +14,7 @@ import traceback
 from models.CheckPointManager import DataCheckpointManager
 from utils.define_node import define_node_edge_opt_parallel
 from utils.model_utils import auto_workers, clean_memory
+from utils.Monitor import ResourceMonitor
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -438,6 +439,7 @@ def embed_nodes_with_abs_pos(graphs, sentid_node_map_list, word_batch_size=64, s
 
      return embedded_graphs
 
+@ResourceMonitor(interval=2, label="TRAIN") ##### test!
 def parallel_convert_graph_serializable(nx_graph):
      """
      Worker function for multiprocessing: Converts a single NetworkX graph
@@ -793,7 +795,7 @@ def get_embedded_pyg_graphs(dataset_type, docs_list, sent_similarity):
                num_items = len(embedded_graph_list)
                if num_items > 0:
                     batch_size = 10
-                    with multiprocessing.get_context("spawn").Pool(num_workers) as pool, \
+                    with multiprocessing.get_context("spawn").Pool(num_workers, maxtasksperchild=5) as pool, \
                          tqdm(total=num_items, desc="Converting to PyG") as pbar:
 
                          for i in range(0, num_items, batch_size):
