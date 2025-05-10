@@ -53,7 +53,10 @@ class OptimizedDataset(Dataset):
      def __getitem__(self, idx):
           if not self._loaded.value:
                self._load_all()
-               
+          
+          if self.data is None or self.data[idx] is None:
+               raise ValueError("Data not loaded yet. Current value is None.")
+          
           return self.data[idx].cpu()
      
 def custom_collate_fn(batch):

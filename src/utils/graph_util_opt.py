@@ -7,6 +7,7 @@ from torch_geometric.data import HeteroData
 from contextlib import contextmanager
 import numpy as np
 import multiprocessing
+import torch.multiprocessing as mp
 from tqdm.auto import tqdm
 import time
 import traceback
@@ -439,7 +440,6 @@ def embed_nodes_with_abs_pos(graphs, sentid_node_map_list, word_batch_size=64, s
 
      return embedded_graphs
 
-@ResourceMonitor(interval=10, label="TRAIN") ##### test!
 def parallel_convert_graph_serializable(nx_graph):
      """
      Worker function for multiprocessing: Converts a single NetworkX graph
@@ -459,11 +459,10 @@ def parallel_convert_graph_serializable(nx_graph):
           for node, data in nx_graph.nodes(data=True):
                cur_type = data['type']
                embed = data.get('embedding', None)
-               if embed is not None:
-                    embed = embed.cpu()
-               else:
+               if embed is None:
                     print(f"Warning: Node {node} of type {cur_type} has no 'embedding' attribute.")
                     pass
+                         
                text = data['text']
                if cur_type == 'word':
                     if embed is not None:
@@ -486,13 +485,15 @@ def parallel_convert_graph_serializable(nx_graph):
           if word_id > 0:
                serializable_graph_data['node_types']['word'] = {'text': word_texts}
                if word_nodes_feat:
-                    serializable_graph_data['node_types']['word']['x'] = torch.stack(word_nodes_feat).numpy()
+                    # serializable_graph_data['node_types']['word']['x'] = torch.stack(word_nodes_feat).numpy()
+                    serializable_graph_data['node_types']['word']['x'] = np.stack(word_nodes_feat)
 
           if sent_id > 0:
                serializable_graph_data['node_types']['sentence'] = {'text': sent_texts}
                if sent_nodes_feat:
-                    serializable_graph_data['node_types']['sentence']['x'] = torch.stack(sent_nodes_feat).numpy()
-
+                    # serializable_graph_data['node_types']['sentence']['x'] = torch.stack(sent_nodes_feat).numpy()
+                    serializable_graph_data['node_types']['sentence']['x'] = np.stack(sent_nodes_feat)
+                    
           edge_data_temp = {
                ('sentence', 'similarity', 'sentence'): {'indices': [], 'attrs': []},
                ('sentence', 'pro_ant', 'sentence'): {'indices': [], 'attrs': []},
@@ -542,8 +543,7 @@ def parallel_convert_graph_serializable(nx_graph):
 
           # Mapping from new pyg sentence id -> sentence text
           pyg_id_to_sent_txt_map = {}
-          for old_node in nx_graph.nodes():
-               attributes = nx_graph.nodes[old_node]
+          for old_node, attributes in nx_graph.nodes(data=True):
                if not attributes['type'] == 'sentence': continue
                
                sent_txt = attributes['text'][2] ## only sentence text needed
@@ -559,6 +559,7 @@ def parallel_convert_graph_serializable(nx_graph):
      except Exception as e:
           print(f"[ERROR] An exception occurred while converting graphs: {e}")
           traceback.print_exc()
+          return e
 
 def create_embed_graphs_opt(docs_list, sent_similarity=0.6):
      """
@@ -687,6 +688,12 @@ def create_embed_graphs_opt(docs_list, sent_similarity=0.6):
 def get_embedded_pyg_graphs(dataset_type, docs_list, sent_similarity):
      data_cpt = DataCheckpointManager()
      
+     try:
+          mp.set_sharing_strategy('file_system')
+          print("Successfully set PyTorch multiprocessing sharing strategy to 'file_system'.")
+     except RuntimeError:
+          print("Could not set PyTorch multiprocessing sharing strategy.")
+     
      if (latest_step := data_cpt.get_latest_step(dataset_type = dataset_type)):
           print(f"Resume from step: [{latest_step}] for {dataset_type} dataset")
      else:
@@ -723,6 +730,7 @@ def get_embedded_pyg_graphs(dataset_type, docs_list, sent_similarity):
                     sentid_node_map_list = data['sentid_node_map_list']
 
      # --- Step 2: Create NetworkX Graphs (Parallel) ---
+     graph_list = None
      if not latest_step or latest_step in [define_node_key, graph_create_key]:
           if not latest_step or latest_step != graph_create_key:  # Run if starting or finished step 1
                print(f"Step 2: Creating NetworkX graphs in parallel for {dataset_type} dataset...")
@@ -784,18 +792,27 @@ def get_embedded_pyg_graphs(dataset_type, docs_list, sent_similarity):
           
      # --- Step 4: Convert to PyG HeteroData (Parallel) ---
      node_sent_map_list = None
+     pyg_graph_list_cpu = None
      if not latest_step or latest_step in [define_node_key, graph_create_key, embed_graph_key, final_graph_key]:
           if not latest_step or latest_step != final_graph_key:
                print("Step 4: Converting graphs to PyG format in parallel...")
                start_time = time.time()
                pyg_graph_list_cpu = []
                node_sent_map_list = []
-
-               num_workers = min(2, auto_workers()) # for saving memory
+               num_workers = min(3, auto_workers()) # for saving memory
                num_items = len(embedded_graph_list)
+               
+               ## serialize the graph data to avoid memory issues
+               for g in embedded_graph_list:
+                    for node, data in g.nodes(data=True):
+                         if 'embedding' in data and isinstance(data['embedding'], torch.Tensor):
+                              data['embedding'] = data['embedding'].detach().cpu().numpy()
+               
                if num_items > 0:
-                    batch_size = 10
-                    with multiprocessing.get_context("spawn").Pool(num_workers, maxtasksperchild=5) as pool, \
+                    batch_size = 30
+                    with multiprocessing.get_context("spawn").Pool(
+                         processes=num_workers, 
+                         maxtasksperchild=5) as pool, \
                          tqdm(total=num_items, desc="Converting to PyG") as pbar:
 
                          for i in range(0, num_items, batch_size):
@@ -817,19 +834,19 @@ def get_embedded_pyg_graphs(dataset_type, docs_list, sent_similarity):
                                              if 'text' in node_data:
                                                   het_graph[node_type].text = node_data['text']
                                              if 'x' in node_data:
-                                                  het_graph[node_type].x = torch.from_numpy(node_data['x'])
+                                                  het_graph[node_type].x = torch.from_numpy(node_data['x']).detach().cpu()
                                         
                                         # Process Edge Types
                                         for edge_key_tuple, edge_data in serializable_graph_data['edge_types'].items():
-                                             het_graph[edge_key_tuple].edge_index = torch.from_numpy(edge_data['edge_index'])
-                                             het_graph[edge_key_tuple].edge_attr = torch.from_numpy(edge_data['edge_attr'])
+                                             het_graph[edge_key_tuple].edge_index = torch.from_numpy(edge_data['edge_index']).detach().cpu()
+                                             het_graph[edge_key_tuple].edge_attr = torch.from_numpy(edge_data['edge_attr']).detach().cpu()
 
                                         pyg_graph_list_cpu.append(het_graph)
                                         node_sent_map_list.append(pyg_id_to_sent_txt_map)
                                    
                                    pbar.update()
                               
-                              del batch, results, serializable_graph_data, pyg_id_to_sent_txt_map
+                              del batch, results
                               clean_memory()
                          
                else:

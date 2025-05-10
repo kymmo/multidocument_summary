@@ -40,7 +40,7 @@ class ResourceMonitor(ContextDecorator):
           while not self._stop_event.is_set():
                try:
                     # CPU / RAM / Swap
-                    cpu_pct = psutil.cpu_percent(interval=0.1)
+                    cpu_pct = psutil.cpu_percent(interval=10)
                     vmem = psutil.virtual_memory()
                     swap = psutil.swap_memory()
 
@@ -58,7 +58,7 @@ class ResourceMonitor(ContextDecorator):
                                    gpu_stats.append(f"GPU{idx} Error: {str(e)}")
 
                     log_msg = (
-                         f"[{self.label}] Memory Usage"
+                         f"[{self.label}] Memory Usage: "
                          f"CPU={cpu_pct:.1f}% | "
                          f"RAM={vmem.percent:.1f}% ({vmem.used/2**30:.2f}/{vmem.total/2**30:.2f} GB) | "
                          f"SWAP={swap.percent:.1f}% ({swap.used/2**30:.2f}/{swap.total/2**30:.2f} GB)"
