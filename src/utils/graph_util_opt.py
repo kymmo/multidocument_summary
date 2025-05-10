@@ -552,7 +552,7 @@ def parallel_convert_graph_serializable(nx_graph):
           
           
           del word_nodes_feat, sent_nodes_feat, word_texts, sent_texts, edge_data_temp, node_map
-          clean_memory()
+
           
           return serializable_graph_data, pyg_id_to_sent_txt_map
      
@@ -687,6 +687,7 @@ def create_embed_graphs_opt(docs_list, sent_similarity=0.6):
 
 def get_embedded_pyg_graphs(dataset_type, docs_list, sent_similarity):
      data_cpt = DataCheckpointManager()
+     num_workers = auto_workers()
      
      try:
           mp.set_sharing_strategy('file_system')
@@ -736,7 +737,6 @@ def get_embedded_pyg_graphs(dataset_type, docs_list, sent_similarity):
                print(f"Step 2: Creating NetworkX graphs in parallel for {dataset_type} dataset...")
                start_time = time.time()
                num_items = len(word_nodeId_list)
-               num_workers = auto_workers()
                pool_args = list(zip(word_nodeId_list, sent_nodeId_list, edge_data_list))
 
                graph_list = []
@@ -774,7 +774,6 @@ def get_embedded_pyg_graphs(dataset_type, docs_list, sent_similarity):
                     embedded_graph_list.append(g)
 
                del embedded_graphs_gpu
-               clean_memory()
 
                data_cpt.save_step(step_name=embed_graph_key, data={'embedded_graph_list': embedded_graph_list}, dataset_type=dataset_type)
                print(f"Step 3 finished in {time.time() - start_time:.2f}s for {dataset_type} dataset")
@@ -787,9 +786,6 @@ def get_embedded_pyg_graphs(dataset_type, docs_list, sent_similarity):
                               if 'embedding' in data and isinstance(data['embedding'], torch.Tensor) and data['embedding'].requires_grad:
                                    data['embedding'] = data['embedding'].detach()
 
-     ## clean up memory regularly
-     clean_memory()
-          
      # --- Step 4: Convert to PyG HeteroData (Parallel) ---
      node_sent_map_list = None
      pyg_graph_list_cpu = None
@@ -799,7 +795,6 @@ def get_embedded_pyg_graphs(dataset_type, docs_list, sent_similarity):
                start_time = time.time()
                pyg_graph_list_cpu = []
                node_sent_map_list = []
-               num_workers = auto_workers()
                num_items = len(embedded_graph_list)
                
                ## serialize the graph data to avoid memory issues
@@ -809,44 +804,37 @@ def get_embedded_pyg_graphs(dataset_type, docs_list, sent_similarity):
                               data['embedding'] = data['embedding'].detach().cpu().numpy()
                
                if num_items > 0:
-                    batch_size = 500
-                    with multiprocessing.get_context("spawn").Pool(processes=num_workers) as pool, \
+                    with multiprocessing.get_context("spawn").Pool(num_workers) as pool, \
                          tqdm(total=num_items, desc="Converting to PyG") as pbar:
-
-                         for i in range(0, num_items, batch_size):
-                              batch = embedded_graph_list[i:i + batch_size]
-                              results = list(pool.imap(parallel_convert_graph_serializable, batch))
-                              
-                              for res in results:
-                                   if isinstance(res, Exception):
-                                        pyg_graph_list_cpu.append(None)
-                                        node_sent_map_list.append(None)
-                                   else:
-                                        serializable_graph_data, pyg_id_to_sent_txt_map = res
-                                        
-                                        ## convert to hetero data
-                                        het_graph = HeteroData()
-
-                                        # Process Node Types
-                                        for node_type, node_data in serializable_graph_data['node_types'].items():
-                                             if 'text' in node_data:
-                                                  het_graph[node_type].text = node_data['text']
-                                             if 'x' in node_data:
-                                                  het_graph[node_type].x = torch.from_numpy(node_data['x']).detach().cpu()
-                                        
-                                        # Process Edge Types
-                                        for edge_key_tuple, edge_data in serializable_graph_data['edge_types'].items():
-                                             het_graph[edge_key_tuple].edge_index = torch.from_numpy(edge_data['edge_index']).detach().cpu()
-                                             het_graph[edge_key_tuple].edge_attr = torch.from_numpy(edge_data['edge_attr']).detach().cpu()
-
-                                        pyg_graph_list_cpu.append(het_graph)
-                                        node_sent_map_list.append(pyg_id_to_sent_txt_map)
+                    
+                         for res_idx, res in enumerate(pool.imap(parallel_convert_graph_serializable, embedded_graph_list)):
+                              if isinstance(res, Exception):
+                                   print(f"[Error] while converting {res_idx}-th graph.")
+                                   pyg_graph_list_cpu.append(None)
+                                   node_sent_map_list.append(None)
+                              else:
+                                   serializable_graph_data, pyg_id_to_sent_txt_map = res
                                    
-                                   pbar.update()
+                                   ## convert to hetero data
+                                   het_graph = HeteroData()
+
+                                   # Process Node Types
+                                   for node_type, node_data in serializable_graph_data['node_types'].items():
+                                        if 'text' in node_data:
+                                             het_graph[node_type].text = node_data['text']
+                                        if 'x' in node_data:
+                                             het_graph[node_type].x = torch.from_numpy(node_data['x']).detach()
+                                   
+                                   # Process Edge Types
+                                   for edge_key_tuple, edge_data in serializable_graph_data['edge_types'].items():
+                                        het_graph[edge_key_tuple].edge_index = torch.from_numpy(edge_data['edge_index']).detach()
+                                        het_graph[edge_key_tuple].edge_attr = torch.from_numpy(edge_data['edge_attr']).detach()
+
+                                   pyg_graph_list_cpu.append(het_graph)
+                                   node_sent_map_list.append(pyg_id_to_sent_txt_map)
                               
-                              del batch, results
-                              clean_memory()
-                         
+                              pbar.update()
+
                else:
                     pyg_graph_list_cpu = []
                     node_sent_map_list = []
@@ -861,5 +849,6 @@ def get_embedded_pyg_graphs(dataset_type, docs_list, sent_similarity):
                pyg_graph_list_cpu = data['pyg_graph_list']
                node_sent_map_list = data['node_sent_map_list']
      
+     clean_memory()
      
      return pyg_graph_list_cpu, node_sent_map_list
