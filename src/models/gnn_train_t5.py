@@ -116,10 +116,6 @@ def train_gnn(file_path, hidden_size, out_size, num_heads, val_file_path, t5_mod
                          with torch.no_grad():
                               t5_embedding_matrix = t5_model.get_input_embeddings().weight  # (vocab_size, hidden_dim)
                               similarities = chunked_cosine_similarity(projected_embeddings, t5_embedding_matrix, chunk_size=8)
-                              # top_k_values, top_k_indices = similarities.topk(k=5, dim=1)
-                              # average_similarity = top_k_values.mean(dim=1)  # (batch_size,)
-                              # abs_diff = torch.abs(similarities - average_similarity.unsqueeze(1))  # (batch_size, vocab_size)
-                              # closest_token_ids = abs_diff.argmin(dim=1)  # (batch_size,)
                               closest_token_ids = similarities.argmax(dim=1) ## most similar
                               seq_length = reshape_embeddings.size(1)
                               labels = closest_token_ids.unsqueeze(1).expand(-1, seq_length)  # (batch_size, seq_length)

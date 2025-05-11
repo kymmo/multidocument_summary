@@ -36,9 +36,6 @@ class RelHetGraph(nn.Module):
                'word': F.relu(self.lin_word(word_feat))
           }
           
-          # h = checkpoint(self._forward_conv1, h_initial, g.edge_index_dict, preserve_rng_state=True)
-          # h = checkpoint(self._forward_conv2, h, g.edge_index_dict, preserve_rng_state=True)
-
           h = self.conv1(h_initial, g.edge_index_dict)
           h = {k: self.feat_drop(h_val) for k, h_val in h.items()}  # dropout
           
