@@ -224,7 +224,6 @@ def fine_tune_t5(file_path, val_file_path, out_size, num_epochs = 20,
                early_stopper.load_state(checkpoint['early_stopper_state'])
                print("Found EarlyStopper state in checkpoint, loaded.")
           else:
-               # if resuming from an older checkpoint saved before this feature was added
                print("No EarlyStopper state found in checkpoint. Initializing fresh.")
           
           print(f"Resume training! From epoch {start_epoch}, batch {accumulated_batches}.")

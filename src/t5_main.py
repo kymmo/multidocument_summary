@@ -5,7 +5,7 @@ from models.model_eval import eval_t5_summary
 from models.two_stage_train import train_gnn_t5
 
 def model_train_eval(dataset_path, learning_rate = 0.001,num_epochs = 20, batch_size = 8, 
-                    patience = 5, sent_similarity_threshold = 0.6, 
+                    patience = 5, sent_similarity_threshold = 0.75,
                     t5_learning_rates_dict = None, warmup_ratio = 0.1):
      bert_embed_size = 768
      hidden_size = bert_embed_size
