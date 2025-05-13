@@ -1,11 +1,9 @@
 import torch
 import time
-import torch.nn as nn
 from torch_geometric.data import Batch
-import torch.nn.functional as F
 from torch.utils.data import DataLoader as data_DataLoader
+from transformers import T5Tokenizer
 
-from models.gnn_train_t5 import t5_tokenizer, t5_model
 from utils.model_utils import clean_memory, freeze_model
 from models.CustomT5 import CustomT5, reshape_embedding_to_tensors
 from models.DatasetLoader import EvalDataset, custom_collate_fn
@@ -14,7 +12,9 @@ from models.ModelFileManager import model_fm
 from models.two_stage_train import get_combined_embed2
 from utils.model_utils import rouge_eval, merge_dicts
 
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+base_model = "google-t5/t5-base"
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+t5_tokenizer = T5Tokenizer.from_pretrained(base_model)
 
 def eval_t5_summary(eval_data_path, max_summary_length, batch_size = 16, sent_similarity = 0.6):
      ## models load

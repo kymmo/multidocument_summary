@@ -308,9 +308,7 @@ def fine_tune_t5(file_path, val_file_path, out_size, num_epochs = 20,
                schedulers_to_save = {'scheduler': scheduler}
                if early_stopper(avg_val_loss, epoch, models_to_save, optimizers_to_save, schedulers_to_save, scaler, global_step):
                     break # Stop training
-               
-               # scheduler.step()
-               
+                              
                ckpt_path = ckpt_mgr.save(
                     epoch=epoch,
                     models=models_to_save,
@@ -352,9 +350,9 @@ def fine_tune_t5(file_path, val_file_path, out_size, num_epochs = 20,
      else:
           print("[Checkpoint] Best checkpoint not found. Using the model state from the last completed epoch.")
      
-     # custom_t5_model.save_pretrained("./fine_tuned_t5")
      model_fm.save_t5(custom_t5_model)
      
+     print("--- T5 Fine-tune Finish! ---")
      del custom_t5_model
      del gnn_model
      clean_memory()
