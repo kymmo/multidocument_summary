@@ -175,12 +175,6 @@ def process_batch(batch_input):
 
           # spaCy Processing
           processed_docs_ordered = list(_subprocess_coref_nlp.pipe(all_doc_texts, batch_size=WORKER_NLP_BATCH_SIZE))
-
-          ##########test
-          print(f"Processed {len(processed_docs_ordered)} documents.")
-          for doc in processed_docs_ordered:
-               print(f"Doc: {doc.text}")
-          ##################
           
           # Keyword Extraction
           docs_kws_scores_ordered = extract_keywords_internal(all_doc_texts)
