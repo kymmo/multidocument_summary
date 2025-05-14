@@ -83,6 +83,10 @@ def train_gnn(file_path, hidden_size, out_size, num_heads, val_file_path, senten
                total_loss = 0
                for batch in train_dataloader:
                     batch = batch.to(device)
+                    
+                    ##############test
+                    print("batch", batch)
+                    ####################3
                     masked_graph = get_masked_graph(batch, k=2)
                     
                     with torch.cuda.amp.autocast():
