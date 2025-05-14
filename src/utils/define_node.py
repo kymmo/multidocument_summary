@@ -25,8 +25,8 @@ os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 NLP_MODEL_NAME = "en_core_web_lg"
 SENT_MODEL_NAME = "all-MiniLM-L6-v2"
-WORKER_NLP_BATCH_SIZE = 30 # for spacy docs process
-WORKER_TASK_BATCH_SIZE = 10 # for each subprocess
+WORKER_NLP_BATCH_SIZE = 50 # for spacy docs process
+WORKER_TASK_BATCH_SIZE = 20 # for each subprocess
 
 # These will hold the models loaded *within each subprocess*
 _subprocess_coref_nlp = None
@@ -79,7 +79,7 @@ def compute_edges_similarity(sents, edge_threshold, encode_batch_size=256, sim_b
 
           if rows.numel() > 0:
                sim_values_intra = sims_intra[rows, cols]
-               mask = torch.abs(sim_values_intra) >= edge_threshold
+               mask = sim_values_intra >= edge_threshold
                valid_rows = rows[mask]
                valid_cols = cols[mask]
                valid_sims = sim_values_intra[mask]
@@ -96,7 +96,7 @@ def compute_edges_similarity(sents, edge_threshold, encode_batch_size=256, sim_b
                batch_j = normalized_embeddings[j:j_end]
 
                sims_inter = torch.mm(batch_i, batch_j.T)
-               mask_inter = torch.abs(sims_inter) >= edge_threshold
+               mask_inter = sims_inter >= edge_threshold
                idx = torch.nonzero(mask_inter)
 
                if idx.numel() > 0:
@@ -176,6 +176,12 @@ def process_batch(batch_input):
           # spaCy Processing
           processed_docs_ordered = list(_subprocess_coref_nlp.pipe(all_doc_texts, batch_size=WORKER_NLP_BATCH_SIZE))
 
+          ##########test
+          print(f"Processed {len(processed_docs_ordered)} documents.")
+          for doc in processed_docs_ordered:
+               print(f"Doc: {doc.text}")
+          ##################
+          
           # Keyword Extraction
           docs_kws_scores_ordered = extract_keywords_internal(all_doc_texts)
 
@@ -415,12 +421,10 @@ def extract_keywords_internal(docs_text, words_per_100=1, min_keywords=2, max_ke
 
      return final_keywords
 
-def compute_edges_similarity_ann(sentence_texts, abs_threshold, EMB_BATCH_SIZE=128, GPU_K_LIMIT=2048):
+def compute_edges_similarity_ann(sentence_texts, threshold, EMB_BATCH_SIZE=128, GPU_K_LIMIT=2048):
      """
      Computes similarity edges using FAISS KNN search and filtering based on
-     the *absolute* value of cosine similarity. Finds pairs where
-     abs(Cosine_Similarity) >= abs_threshold (capturing both highly similar
-     and highly dissimilar pairs).
+     the threshold value of cosine similarity. ).
 
      Encodes input sentence texts internally using a pre-loaded model.
      Automatically attempts to use GPU if faiss-gpu is installed and CUDA is available.
@@ -429,7 +433,6 @@ def compute_edges_similarity_ann(sentence_texts, abs_threshold, EMB_BATCH_SIZE=1
 
      if not sentence_texts or len(sentence_texts) < 2:
           return []
-     abs_threshold = abs(abs_threshold)
 
      # --- 1. Encode Sentences & Normalize ---
      embeddings_tensor = None
@@ -504,18 +507,25 @@ def compute_edges_similarity_ann(sentence_texts, abs_threshold, EMB_BATCH_SIZE=1
           # I contains the indices of the neighbors
 
           # --- 7. Process Search Results and Filter ---
-          added_pairs = set() # Use a set to efficiently track added pairs and avoid duplicates
-          for i in range(n_sents): # For each sentence i (query)
-               for neighbor_rank in range(k): # Iterate through its k neighbors found
-                    j = I[i, neighbor_rank] # Index of the neighbor sentence
-                    sim = D[i, neighbor_rank] # Cosine Similarity between i and j
+          ##########test
+          test_sim = []
+          #############
+          
+          added_pairs = set()
+          for i in range(n_sents):
+               for neighbor_rank in range(k):
+                    j = I[i, neighbor_rank]
+                    sim = D[i, neighbor_rank]
 
+                    ##########test
+                    test_sim.append((i, j, sim))
+                    ##############
+                    
                     # Skip invalid results or self-comparison
                     if j == -1 or i == j:
                          continue
-
-                    if abs(sim) >= abs_threshold:
-                         # Ensure we only add edge (i, j) or (j, i) once
+                    
+                    if sim >= threshold:
                          pair = tuple(sorted((i, j)))
                          if pair not in added_pairs:
                               edges.append((i, j, float(sim)))
@@ -526,7 +536,6 @@ def compute_edges_similarity_ann(sentence_texts, abs_threshold, EMB_BATCH_SIZE=1
           traceback.print_exc()
           return []
      finally:
-          # --- 8. Cleanup GPU Resources ---
           if using_gpu and res is not None:
                try:
                     del index
@@ -534,6 +543,10 @@ def compute_edges_similarity_ann(sentence_texts, abs_threshold, EMB_BATCH_SIZE=1
                except Exception as e:
                     print(f"[WARN][Worker {os.getpid()}] Error cleaning up FAISS GPU resources: {e}")
 
+     ##########test
+          print(f"similarity list: {test_sim}")
+     #############
+          
      return edges
 
 

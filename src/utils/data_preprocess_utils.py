@@ -29,8 +29,9 @@ def load_jsonl(file_path):
      """
      documents_list = []
      summary_list = []
-     with open(file_path, 'r', encoding='utf-8') as f:
+     with open(file_path, 'r', encoding='utf-8-sig') as f:
           for line in f:
+               line = line.strip()
                try:
                     data = json.loads(line)
                     if len(data['document']) > 1: # except single doc
