@@ -257,6 +257,9 @@ def process_batch(batch_input):
 
                
                # 2. Similarity Edges
+               ###########test
+               print(f"similarity check for sample {original_training_idx} with {len(sample_all_sent_texts)} sentences.")
+               #############
                similarity_edges = compute_edges_similarity_ann(sample_all_sent_texts, edge_similarity_threshold)
                if similarity_edges is None:
                     print(f"[WARN] No similarity edges found for document (orig={original_training_idx}, doc={doc_idx_in_sample}).")
