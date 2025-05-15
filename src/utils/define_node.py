@@ -510,10 +510,6 @@ def compute_edges_similarity_ann(sentence_texts, threshold, EMB_BATCH_SIZE=128, 
                for neighbor_rank in range(k):
                     j = I[i, neighbor_rank]
                     sim = D[i, neighbor_rank]
-
-                    ##########test
-                    test_sim.append((i, j, sim))
-                    ##############
                     
                     # Skip invalid results or self-comparison
                     if j == -1 or i == j:
@@ -524,6 +520,10 @@ def compute_edges_similarity_ann(sentence_texts, threshold, EMB_BATCH_SIZE=128, 
                          if pair not in added_pairs:
                               edges.append((i, j, float(sim)))
                               added_pairs.add(pair)
+                              
+                              ##########test
+                              test_sim.append((i, j, sim))
+                              ##############
 
      except Exception as e:
           print(f"[ERROR][Worker {os.getpid()}] FAISS search or processing failed: {e}")
@@ -538,7 +538,7 @@ def compute_edges_similarity_ann(sentence_texts, threshold, EMB_BATCH_SIZE=128, 
                     print(f"[WARN][Worker {os.getpid()}] Error cleaning up FAISS GPU resources: {e}")
 
      ##########test
-          print(f"similarity list: {test_sim}")
+          print(f"similarity_list = {test_sim}")
      #############
           
      return edges

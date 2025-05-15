@@ -89,6 +89,10 @@ def train_gnn(file_path, hidden_size, out_size, num_heads, val_file_path, senten
                     ####################3
                     masked_graph = get_masked_graph(batch, k=2)
                     
+                    if masked_graph is None:
+                         print("No positive similarity pairs found in the batch.")
+                         continue
+                    
                     with torch.cuda.amp.autocast():
                          sentence_feat = masked_graph['sentence'].x
                          word_feat = masked_graph['word'].x
@@ -127,6 +131,10 @@ def train_gnn(file_path, hidden_size, out_size, num_heads, val_file_path, senten
                     for batch in val_dataloader:
                          batch = batch.to(device)
                          masked_graph = get_masked_graph(batch, k=2)
+                         
+                         if masked_graph is None:
+                              print("No positive similarity pairs found in the batch.")
+                              continue
                          
                          with torch.cuda.amp.autocast():
                               sentence_feat = masked_graph['sentence'].x
@@ -223,7 +231,7 @@ def get_masked_graph(pyg_graph, k = 2):
      if ('sentence', 'similarity', 'sentence') in masked_graph.edge_types:
           pos_ind = masked_graph['sentence', 'similarity', 'sentence'].edge_index
      else:
-          raise AttributeError(f"Graph does not have similarity edge type. Please check the graph.")
+          return None
      
      pos_pairs = set()
      for i in range(pos_ind.size(1)):
@@ -233,7 +241,7 @@ def get_masked_graph(pyg_graph, k = 2):
           pos_pairs.add(to_add)
      
      if pos_pairs is None or len(pos_pairs) == 0:
-          raise ValueError("No positive similarity pairs found in the graph.")
+          return None
      
      neg_pairs = set()
      sent_num = masked_graph['sentence'].x.size(0)
