@@ -90,7 +90,6 @@ def train_gnn(file_path, hidden_size, out_size, num_heads, val_file_path, senten
                     masked_graph = get_masked_graph(batch, k=2)
                     
                     if masked_graph is None:
-                         print("No positive similarity pairs found in the batch.")
                          continue
                     
                     with torch.cuda.amp.autocast():
@@ -133,7 +132,6 @@ def train_gnn(file_path, hidden_size, out_size, num_heads, val_file_path, senten
                          masked_graph = get_masked_graph(batch, k=2)
                          
                          if masked_graph is None:
-                              print("No positive similarity pairs found in the batch.")
                               continue
                          
                          with torch.cuda.amp.autocast():
@@ -225,12 +223,14 @@ def get_masked_graph(pyg_graph, k = 2):
           k (int): The number of negative edges to generate for each positive edge.
      """
      masked_graph = pyg_graph.clone()
+     MIN_POSITIVE_LINKS_THRESHOLD = 5
 
      # --- 1. produce positive and negative edge pairs ---
      pos_ind = None
      if ('sentence', 'similarity', 'sentence') in masked_graph.edge_types:
           pos_ind = masked_graph['sentence', 'similarity', 'sentence'].edge_index
      else:
+          print("No positive similarity pairs found in the batch.")
           return None
      
      pos_pairs = set()
@@ -241,6 +241,11 @@ def get_masked_graph(pyg_graph, k = 2):
           pos_pairs.add(to_add)
      
      if pos_pairs is None or len(pos_pairs) == 0:
+          print("No positive similarity pairs found in the batch.")
+          return None
+     
+     if len(pos_pairs) < MIN_POSITIVE_LINKS_THRESHOLD:
+          print("Not enough positive similarity pairs found in the graph.")
           return None
      
      neg_pairs = set()

@@ -257,13 +257,15 @@ def process_batch(batch_input):
 
                
                # 2. Similarity Edges
-               ###########test
-               print(f"similarity check for sample {original_training_idx} with {len(sample_all_sent_texts)} sentences.")
-               #############
                similarity_edges = compute_edges_similarity_ann(sample_all_sent_texts, edge_similarity_threshold)
                if similarity_edges is None:
                     print(f"[WARN] No similarity edges found for document (orig={original_training_idx}, doc={doc_idx_in_sample}).")
                     continue
+               
+               ###########test
+               print(f"similarity check for sample {original_training_idx} with {len(similarity_edges)} similar sentences.")
+               print("sim: ", similarity_edges)
+               #############
                
                for node_i_local, node_j_local, sim_value in similarity_edges:
                     sample_level_node_i = sample_sent_index_to_node_id[node_i_local]
@@ -484,8 +486,6 @@ def compute_edges_similarity_ann(sentence_texts, threshold, EMB_BATCH_SIZE=128, 
           index.add(embeddings_np)
 
           # --- 6. Perform k-NN Search ---
-          # Use index.search to get neighbors and their similarities (IP = CosSim here)
-          # Search for all possible neighbors (k=n_sents) to check all pairs.
           k = n_sents
           batch_size_search = 128
           D_list = []
@@ -504,10 +504,6 @@ def compute_edges_similarity_ann(sentence_texts, threshold, EMB_BATCH_SIZE=128, 
           # I contains the indices of the neighbors
 
           # --- 7. Process Search Results and Filter ---
-          ##########test
-          test_sim = []
-          #############
-          
           added_pairs = set()
           for i in range(n_sents):
                for neighbor_rank in range(k):
@@ -524,10 +520,6 @@ def compute_edges_similarity_ann(sentence_texts, threshold, EMB_BATCH_SIZE=128, 
                               edges.append((i, j, float(sim)))
                               added_pairs.add(pair)
                               
-                              ##########test
-                              test_sim.append((i, j, sim))
-                              ##############
-
      except Exception as e:
           print(f"[ERROR][Worker {os.getpid()}] FAISS search or processing failed: {e}")
           traceback.print_exc()
@@ -539,10 +531,6 @@ def compute_edges_similarity_ann(sentence_texts, threshold, EMB_BATCH_SIZE=128, 
                     del res
                except Exception as e:
                     print(f"[WARN][Worker {os.getpid()}] Error cleaning up FAISS GPU resources: {e}")
-
-     ##########test
-          print(f"similarity_list = {test_sim}")
-     #############
           
      return edges
 
