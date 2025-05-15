@@ -26,7 +26,7 @@ def train_gnn(file_path, hidden_size, out_size, num_heads, val_file_path, senten
      train_dataloader = geo_DataLoader(
           train_dataset,
           batch_size=batch_size,
-          shuffle=False, ##########test!
+          shuffle=True,
           pin_memory=True,
           num_workers=0,
      )
@@ -83,10 +83,6 @@ def train_gnn(file_path, hidden_size, out_size, num_heads, val_file_path, senten
                total_loss = 0
                for batch in train_dataloader:
                     batch = batch.to(device)
-                    
-                    ##############test
-                    print("batch", batch)
-                    ####################3
                     masked_graph = get_masked_graph(batch, k=2)
                     
                     if masked_graph is None:

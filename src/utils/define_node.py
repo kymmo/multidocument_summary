@@ -262,11 +262,6 @@ def process_batch(batch_input):
                     print(f"[WARN] No similarity edges found for document (orig={original_training_idx}, doc={doc_idx_in_sample}).")
                     continue
                
-               ###########test
-               print(f"similarity check for sample {original_training_idx} with {len(similarity_edges)} similar sentences.")
-               print("sim: ", similarity_edges)
-               #############
-               
                for node_i_local, node_j_local, sim_value in similarity_edges:
                     sample_level_node_i = sample_sent_index_to_node_id[node_i_local]
                     sample_level_node_j = sample_sent_index_to_node_id[node_j_local]
