@@ -26,7 +26,7 @@ def train_gnn(file_path, hidden_size, out_size, num_heads, val_file_path, senten
      train_dataloader = geo_DataLoader(
           train_dataset,
           batch_size=batch_size,
-          shuffle=True,
+          shuffle=False, ##########test!
           pin_memory=True,
           num_workers=0,
      )
