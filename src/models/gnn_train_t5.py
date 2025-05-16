@@ -1,25 +1,25 @@
 import torch
 import random
 import math
+import os
 import torch.nn.functional as F
+import matplotlib.pyplot as plt
 from torch_geometric.loader import DataLoader as geo_DataLoader
 
 from models.RelHetGraph import RelHetGraph
 from models.DatasetLoader import EvalDataset, OptimizedDataset, custom_collate_fn
-from models.CheckPointManager import ModelCheckpointManager
+from models.CheckPointManager import ModelCheckpointManager, DataCheckpointManager, parent_path
 from models.EarlyStopper import EarlyStopper
-from models.CheckPointManager import DataCheckpointManager
 from models.ModelFileManager import model_fm
 from utils.model_utils import freeze_model, clean_memory, print_gpu_memory
 from models.LinkPredictor import LinkPredictor
-
 
 def train_gnn(file_path, hidden_size, out_size, num_heads, val_file_path, sentence_in_size = 768, word_in_size = 768, 
                learning_rate=0.001, num_epochs=20, feat_drop=0.2, attn_drop=0.2, batch_size=32, save_method='entire_model', patience=5, sent_similarity_threshold = 0.6,
                device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')):
      """Trains the HetGNN model using a proxy task."""
      clean_memory()
-     print(f"Task runing on {device}")
+     print(f"GNN training task runing on {device}")
      data_cpt = DataCheckpointManager()
 
      train_dataset = OptimizedDataset(file_path=file_path, dataset_type=data_cpt.DataType.TRAIN.value, sent_similarity=sent_similarity_threshold)
@@ -55,6 +55,8 @@ def train_gnn(file_path, hidden_size, out_size, num_heads, val_file_path, senten
      early_stopper = EarlyStopper(patience=patience, checkpoint_manager=ckpt_mgr)
 
      start_epoch = 0
+     train_losses = [] # list to store training losses for plotting
+     val_losses = []
      if (checkpoint := ckpt_mgr.load(device)) is not None:
           gnn_model.load_state_dict(checkpoint['gnn_model_state'])
           link_predictor.load_state_dict(checkpoint['link_predictor_state'])
@@ -71,28 +73,35 @@ def train_gnn(file_path, hidden_size, out_size, num_heads, val_file_path, senten
           else:
                # if resuming from an older checkpoint saved before this feature was added
                print("No EarlyStopper state found in checkpoint. Initializing fresh.")
+          
+          if 'train_losses' in checkpoint: train_losses = checkpoint['train_losses']
+          if 'val_losses' in checkpoint: val_losses = checkpoint['val_losses']
+          
           print(f"Resume training! Start from epoch {start_epoch}.")
 
      last_epoch_completed = -1
-     print(f"--- Training ---")
      try:
           for epoch in range(start_epoch, num_epochs):
                last_epoch_completed = epoch
                gnn_model.train()
                link_predictor.train()
-               total_loss = 0
-               for batch in train_dataloader:
+               total_train_loss_epoch  = 0
+               num_train_batches_processed = 0
+               
+               print('--- Training ---')
+               for batch_idx, batch in enumerate(train_dataloader):
                     batch = batch.to(device)
                     masked_graph = get_masked_graph(batch, k=2)
                     
                     if masked_graph is None:
+                         print(f"Skipping training batch {batch_idx} due to get_masked_graph returning None.")
                          continue
                     
+                    optimizer.zero_grad()
                     with torch.cuda.amp.autocast():
                          sentence_feat = masked_graph['sentence'].x
                          word_feat = masked_graph['word'].x
                          corrupted_sentence_feat = F.dropout(sentence_feat, p=0.1, training=gnn_model.training)
-                         optimizer.zero_grad()
                          sentence_embeddings = gnn_model(masked_graph, corrupted_sentence_feat, word_feat)
                          
                          # predicted similarity edge
@@ -108,13 +117,19 @@ def train_gnn(file_path, hidden_size, out_size, num_heads, val_file_path, senten
                          all_labels = torch.cat([pos_labels, neg_labels], dim=0)
 
                          loss = F.binary_cross_entropy_with_logits(all_link_logits, all_labels)
-                         
-                    scaler.scale(loss).backward()
-                    scaler.step(optimizer)
-                    scaler.update()
-                    total_loss += loss.item()
+                    
+                    if torch.is_tensor(loss) and not torch.isnan(loss) and loss.requires_grad:
+                         scaler.scale(loss).backward()
+                         scaler.step(optimizer)
+                         scaler.update()
+                         total_train_loss_epoch += loss.item()
+                         num_train_batches_processed += 1
+                    else:
+                         print(f"[Warning] NaN loss in training batch {batch_idx}. Skipping update.")
+
                
-               avg_train_loss = total_loss / len(train_dataloader)
+               avg_train_loss = total_train_loss_epoch / num_train_batches_processed if num_train_batches_processed > 0 else 0
+               train_losses.append(avg_train_loss)
                print(f"[Training] Epoch {epoch + 1} / {num_epochs}, Loss: {avg_train_loss:.4f}, Training Learning Rate: {scheduler.get_last_lr()[0]:.6f}")
                
                # --- Validation for Early Stop ---
@@ -122,12 +137,14 @@ def train_gnn(file_path, hidden_size, out_size, num_heads, val_file_path, senten
                gnn_model.eval()
                link_predictor.eval()
                total_val_loss = 0
+               num_val_batches_processed = 0
                with torch.no_grad():
-                    for batch in val_dataloader:
+                    for batch_idx_val, batch in enumerate(val_dataloader):
                          batch = batch.to(device)
                          masked_graph = get_masked_graph(batch, k=2)
                          
                          if masked_graph is None:
+                              print(f"Skipping validation batch {batch_idx_val} due to get_masked_graph returning None.")
                               continue
                          
                          with torch.cuda.amp.autocast():
@@ -147,10 +164,16 @@ def train_gnn(file_path, hidden_size, out_size, num_heads, val_file_path, senten
                               neg_labels = torch.zeros_like(neg_logits)
                               all_labels = torch.cat([pos_labels, neg_labels], dim=0)
 
-                         loss = F.binary_cross_entropy_with_logits(all_link_logits, all_labels)
-                         total_val_loss += loss.item()
+                              val_loss = F.binary_cross_entropy_with_logits(all_link_logits, all_labels)
+                         
+                         if torch.is_tensor(val_loss) and not torch.isnan(val_loss):
+                              total_val_loss += loss.item()
+                              num_val_batches_processed += 1
+                         elif torch.isnan(val_loss):
+                              print(f"Warning: NaN loss in validation batch {batch_idx_val}.")
                               
-               avg_val_loss = total_val_loss / len(val_dataloader)
+               avg_val_loss = total_val_loss / num_val_batches_processed if num_val_batches_processed > 0 else 0
+               val_losses.append(avg_val_loss)
                print(f"[Validation] Epoch {epoch + 1}/{num_epochs}, Loss: {avg_val_loss:.4f}")
      
                models_to_save = {'gnn_model': gnn_model, 'link_predictor': link_predictor}
@@ -165,11 +188,16 @@ def train_gnn(file_path, hidden_size, out_size, num_heads, val_file_path, senten
                     optimizers=optimizers_to_save,
                     schedulers=schedulers_to_save,
                     scaler=scaler,
-                    early_stopper_state=current_early_stopper_state
+                    early_stopper_state=current_early_stopper_state,
+                    train_losses=train_losses,
+                    val_losses=val_losses
                )
                print(f"[checkpoint saved] {epoch}-th epoch checkpoint has saved to path {ckpt_path}")
-               
-               if early_stopper(avg_val_loss, epoch, models_to_save, optimizers_to_save, schedulers_to_save, scaler):
+
+               if early_stopper(val_loss=avg_val_loss, epoch=epoch,
+                              models=models_to_save, optimizers=optimizers_to_save,
+                              schedulers=schedulers_to_save, scaler=scaler,
+                              train_losses_history=train_losses, val_losses_history=val_losses):
                     break # Stop training
                
                scheduler.step()
@@ -185,6 +213,8 @@ def train_gnn(file_path, hidden_size, out_size, num_heads, val_file_path, senten
                'scaler': scaler.state_dict(),
                'epoch': current_epoch,
                'early_stopper_state': early_stopper.get_state(),
+               'train_losses': train_losses,
+               'val_losses': val_losses,
                'exception': str(e)
           }, emergency_path)
           print(f"[Exception] Error!! Checkpoint has saved in {emergency_path}")
@@ -198,6 +228,8 @@ def train_gnn(file_path, hidden_size, out_size, num_heads, val_file_path, senten
           link_predictor.load_state_dict(best_checkpoint['link_predictor_state'])
           gnn_model = best_gnn_model
           print(f"[Checkpoint] The least-loss GNN model (from epoch {best_checkpoint.get('epoch', 'N/A')}) is reloaded from checkpoint.")
+     
+     print_and_save_loss_curve(train_losses, val_losses, early_stopper)
      
      if save_method == 'entire_model':
           ## save entire model
@@ -270,3 +302,64 @@ def get_masked_graph(pyg_graph, k = 2):
           del masked_graph['sentence', 'similarity', 'sentence']
      
      return masked_graph
+
+def print_and_save_loss_curve(train_losses, val_losses, early_stopper):
+     
+     SAVE_DIR = os.path.join(parent_path, "images")
+     os.makedirs(SAVE_DIR, exist_ok=True)
+     SAVE_PATH = os.path.join(SAVE_DIR, "gnn_train_loss_curve.png")
+
+     plt.figure(figsize=(10, 6))
+     
+     if len(train_losses) == 0 or len(val_losses) == 0:
+          print("No loss data to plot.")
+          return
+     
+     epochs_ran = list(range(1, len(train_losses) + 1))
+     
+     if len(epochs_ran) > 1:
+          plt.plot(epochs_ran, train_losses, 'b-o', label='Training Loss')
+          plt.plot(epochs_ran, val_losses, 'r-x', label='Validation Loss')
+     else:
+          plt.scatter(epochs_ran, train_losses, c='blue', marker='o', label='Training Loss')
+          plt.scatter(epochs_ran, val_losses, c='red', marker='x', label='Validation Loss')
+     
+
+     if early_stopper.early_stop_triggered:
+          stopped_epoch_for_plot = early_stopper.stopped_epoch + 1
+          
+          if 0 <= early_stopper.stopped_epoch < len(val_losses):
+               plt.scatter(
+                    stopped_epoch_for_plot,
+                    val_losses[early_stopper.stopped_epoch],
+                    color='green',
+                    marker='*',
+                    s=150,
+                    zorder=10,
+                    label=f'Early Stop @ Epoch {stopped_epoch_for_plot}'
+               )
+               plt.axvline(
+                    x=stopped_epoch_for_plot,
+                    color='gray',
+                    linestyle='--',
+                    linewidth=1,
+                    alpha=0.7
+               )
+     
+     plt.title('GNN Pre-training Loss')
+     plt.xlabel('Epoch')
+     plt.ylabel('Loss')
+     plt.legend()
+     plt.grid(True, alpha=0.3)
+     
+          
+     try:
+          plt.savefig(SAVE_PATH, bbox_inches='tight', dpi=300)
+          print(f"Loss curve plot saved to {SAVE_PATH}")
+          
+          plt.show()
+     except Exception as plot_e:
+          print(f"Error saving plot: {plot_e}")
+     finally:
+          plt.close()
+          
