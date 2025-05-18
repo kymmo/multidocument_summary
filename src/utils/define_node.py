@@ -258,7 +258,7 @@ def process_batch(batch_input):
                
                # 2. Similarity Edges
                similarity_edges = compute_edges_similarity_ann(sample_all_sent_texts, edge_similarity_threshold)
-               if similarity_edges is None:
+               if similarity_edges is None or len(similarity_edges) == 0:
                     print(f"[WARN] No similarity edges found for document (orig={original_training_idx}, doc={doc_idx_in_sample}).")
                     continue
                
@@ -320,8 +320,7 @@ def process_batch(batch_input):
                ))
 
                del sample_word_nodeId_map, sample_sent_nodeId_map_by_key, sample_edge_data, sample_sentId_nodeId_map, sample_token_node_map_by_doc
-
-
+               
      except Exception as e:
           pid = os.getpid()
           print(f"[ERROR][Worker {pid}] Processing batch failed: {str(e)}")
@@ -526,7 +525,7 @@ def compute_edges_similarity_ann(sentence_texts, threshold, EMB_BATCH_SIZE=128, 
                     del res
                except Exception as e:
                     print(f"[WARN][Worker {os.getpid()}] Error cleaning up FAISS GPU resources: {e}")
-          
+     
      return edges
 
 
