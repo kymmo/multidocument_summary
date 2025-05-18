@@ -8,7 +8,7 @@ def run():
      
      function signature: 
      def model_train_eval(dataset_path, learning_rate = 0.001,num_epochs = 20, batch_size = 8, 
-                    patience = 5, sent_similarity_threshold = 0.6, 
+                    patience = 5, sent_similarity_threshold = 0.6, gnn_out_size = 768, num_heads = 8,
                     t5_learning_rates_dict = None, warmup_ratio = 0.1)
      """
      
@@ -52,6 +52,16 @@ def run():
                          default=0.6,
                          help='Threshold for sentence similarity edge.')
      
+     parser.add_argument('--gnn-out-size',
+                         type=int,
+                         default=768,
+                         help='Embedding size of gnn model output.')
+     
+     parser.add_argument('--num-heads',
+                         type=int,
+                         default=8,
+                         help='Number of head of gnn model.')
+     
      ## T5 learning rate dict
      parser.add_argument('--t5-lr-encoder-last2',
                          type=float,
@@ -87,6 +97,8 @@ def run():
      print(f"Batch Size:                  {args.batch_size}")
      print(f"Early Stopping Patience:     {args.patience}")
      print(f"Sentence Sim Threshold:      {args.sent_similarity_threshold}")
+     print(f"GNN Output Size:             {args.gnn_out_size}")
+     print(f"GNN Num Heads:               {args.num_heads}")
      print(f"T5 Encoder LR (Last 2):    {args.t5_lr_encoder_last2}")
      print(f"T5 Decoder LR (Last 2):    {args.t5_lr_decoder_last2}")
      print(f"T5 Projector LR:             {args.t5_lr_projector}")
@@ -100,6 +112,8 @@ def run():
                num_epochs=args.num_epochs,
                batch_size=args.batch_size,
                patience=args.patience,
+               gnn_out_size = args.gnn_out_size,
+               num_heads = args.num_heads,
                sent_similarity_threshold=args.sent_similarity_threshold, # Use underscore version here
                t5_learning_rates_dict=t5_learning_rates_dict_from_args,
                warmup_ratio=args.warmup_ratio

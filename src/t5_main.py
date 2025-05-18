@@ -4,18 +4,16 @@ from pathlib import Path
 from models.model_eval import eval_t5_summary
 from models.two_stage_train import train_gnn_t5
 
-def model_train_eval(dataset_path, learning_rate = 0.001,num_epochs = 20, batch_size = 8, 
-                    patience = 5, sent_similarity_threshold = 0.75,
+def model_train_eval(dataset_path, learning_rate = 0.001, num_epochs = 20, batch_size = 8, 
+                    patience = 5, sent_similarity_threshold = 0.75, gnn_out_size = 768, num_heads = 8,
                     t5_learning_rates_dict = None, warmup_ratio = 0.1):
      bert_embed_size = 768
      hidden_size = bert_embed_size
-     out_size = 768 # for t5-base input
-     num_heads = 8
      
      train_gnn_t5(
           dataset_path=dataset_path,
           hidden_size=hidden_size,
-          out_size=out_size,
+          out_size=gnn_out_size,
           num_heads=num_heads,
           learning_rate=learning_rate,
           num_epochs=num_epochs,

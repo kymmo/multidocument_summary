@@ -24,7 +24,6 @@ class CustomT5(T5ForConditionalGeneration):
                nn.ReLU(),
                nn.Linear(hidden_size, self.config.d_model),
                nn.Dropout(0.1)
-               # nn.Linear(self.config.d_model, self.config.d_model)  # 残差层
           )
           
           self._freeze_parameters()

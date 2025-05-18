@@ -1,17 +1,15 @@
 import torch
 import random
 import math
-import os
 import torch.nn.functional as F
-import matplotlib.pyplot as plt
 from torch_geometric.loader import DataLoader as geo_DataLoader
 
 from models.RelHetGraph import RelHetGraph
 from models.DatasetLoader import EvalDataset, OptimizedDataset, custom_collate_fn
-from models.CheckPointManager import ModelCheckpointManager, DataCheckpointManager, parent_path
+from models.CheckPointManager import ModelCheckpointManager, DataCheckpointManager
 from models.EarlyStopper import EarlyStopper
 from models.ModelFileManager import model_fm
-from utils.model_utils import freeze_model, clean_memory, print_gpu_memory
+from utils.model_utils import freeze_model, clean_memory, print_gpu_memory, print_and_save_loss_curve
 from models.LinkPredictor import LinkPredictor
 
 def train_gnn(file_path, hidden_size, out_size, num_heads, val_file_path, sentence_in_size = 768, word_in_size = 768, 
@@ -88,7 +86,7 @@ def train_gnn(file_path, hidden_size, out_size, num_heads, val_file_path, senten
                total_train_loss_epoch  = 0
                num_train_batches_processed = 0
                
-               print('--- Training ---')
+               print('--- GNN Training ---')
                for batch_idx, batch in enumerate(train_dataloader):
                     batch = batch.to(device)
                     masked_graph = get_masked_graph(batch, k=2)
@@ -133,7 +131,7 @@ def train_gnn(file_path, hidden_size, out_size, num_heads, val_file_path, senten
                print(f"[Training] Epoch {epoch + 1} / {num_epochs}, Loss: {avg_train_loss:.4f}, Training Learning Rate: {scheduler.get_last_lr()[0]:.6f}")
                
                # --- Validation for Early Stop ---
-               print('--- Validation ---')
+               print('--- GNN Validation ---')
                gnn_model.eval()
                link_predictor.eval()
                total_val_loss = 0
@@ -229,7 +227,7 @@ def train_gnn(file_path, hidden_size, out_size, num_heads, val_file_path, senten
           gnn_model = best_gnn_model
           print(f"[Checkpoint] The least-loss GNN model (from epoch {best_checkpoint.get('epoch', 'N/A')}) is reloaded from checkpoint.")
      
-     print_and_save_loss_curve(train_losses, val_losses, early_stopper)
+     print_and_save_loss_curve(train_losses, val_losses, early_stopper, label='GNN Training')
      
      if save_method == 'entire_model':
           ## save entire model
@@ -251,7 +249,7 @@ def get_masked_graph(pyg_graph, k = 2):
           k (int): The number of negative edges to generate for each positive edge.
      """
      masked_graph = pyg_graph.clone()
-     MIN_POSITIVE_LINKS_THRESHOLD = 5
+     MIN_POSITIVE_LINKS_THRESHOLD = 3
 
      # --- 1. produce positive and negative edge pairs ---
      pos_ind = None
@@ -302,64 +300,3 @@ def get_masked_graph(pyg_graph, k = 2):
           del masked_graph['sentence', 'similarity', 'sentence']
      
      return masked_graph
-
-def print_and_save_loss_curve(train_losses, val_losses, early_stopper):
-     
-     SAVE_DIR = os.path.join(parent_path, "images")
-     os.makedirs(SAVE_DIR, exist_ok=True)
-     SAVE_PATH = os.path.join(SAVE_DIR, "gnn_train_loss_curve.png")
-
-     plt.figure(figsize=(10, 6))
-     
-     if len(train_losses) == 0 or len(val_losses) == 0:
-          print("No loss data to plot.")
-          return
-     
-     epochs_ran = list(range(1, len(train_losses) + 1))
-     
-     if len(epochs_ran) > 1:
-          plt.plot(epochs_ran, train_losses, 'b-o', label='Training Loss')
-          plt.plot(epochs_ran, val_losses, 'r-x', label='Validation Loss')
-     else:
-          plt.scatter(epochs_ran, train_losses, c='blue', marker='o', label='Training Loss')
-          plt.scatter(epochs_ran, val_losses, c='red', marker='x', label='Validation Loss')
-     
-
-     if early_stopper.early_stop_triggered:
-          stopped_epoch_for_plot = early_stopper.stopped_epoch + 1
-          
-          if 0 <= early_stopper.stopped_epoch < len(val_losses):
-               plt.scatter(
-                    stopped_epoch_for_plot,
-                    val_losses[early_stopper.stopped_epoch],
-                    color='green',
-                    marker='*',
-                    s=150,
-                    zorder=10,
-                    label=f'Early Stop @ Epoch {stopped_epoch_for_plot}'
-               )
-               plt.axvline(
-                    x=stopped_epoch_for_plot,
-                    color='gray',
-                    linestyle='--',
-                    linewidth=1,
-                    alpha=0.7
-               )
-     
-     plt.title('GNN Pre-training Loss')
-     plt.xlabel('Epoch')
-     plt.ylabel('Loss')
-     plt.legend()
-     plt.grid(True, alpha=0.3)
-     
-          
-     try:
-          plt.savefig(SAVE_PATH, bbox_inches='tight', dpi=300)
-          print(f"Loss curve plot saved to {SAVE_PATH}")
-          
-          plt.show()
-     except Exception as plot_e:
-          print(f"Error saving plot: {plot_e}")
-     finally:
-          plt.close()
-          

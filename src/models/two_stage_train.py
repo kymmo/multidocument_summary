@@ -15,7 +15,7 @@ from models.DatasetLoader import EvalDataset, custom_collate_fn
 from models.CustomT5 import CustomT5
 from models.gnn_train_t5 import train_gnn
 from models.CheckPointManager import ModelCheckpointManager, DataCheckpointManager
-from utils.model_utils import freeze_model, clean_memory, print_gpu_memory
+from utils.model_utils import freeze_model, clean_memory, print_gpu_memory, print_and_save_loss_curve
 from models.LongTextEncoder import LongTextEncoder
 from models.EarlyStopper import EarlyStopper
 from models.ModelFileManager import model_fm
@@ -37,7 +37,6 @@ def train_gnn_t5(dataset_path, hidden_size, out_size, num_heads=8, learning_rate
           raise FileNotFoundError(f"File path {train_data_path} or {val_data_path} is not exist!")
      print(f"Accessing training data path: {train_data_path} and validation data path: {val_data_path}")
      
-     print(f"Start training GNN. Parameters: hidden_size: {hidden_size}, out_size: {out_size}, attention_heads: {num_heads}")
      gnn_start_time = time.time()
      #### train gnn, freeze t5
      train_gnn(
@@ -79,29 +78,20 @@ def train_gnn_t5(dataset_path, hidden_size, out_size, num_heads=8, learning_rate
      
      print("*** Two-stage training finish! ***")
 
-def get_combined_embed2(batch_graph_list, gnn_embeddings, sent_text):
+def get_combined_embed2(batch_graph_list, gnn_embeddings, sent_text, CONTEXT_SENT_NUM = 3):
      concat_embedding_list = []
      start_ind = 0
+     t5_model.eval()
+     freeze_model(t5_model)
      encoder = LongTextEncoder(t5_tokenizer, t5_model)
-     
-     ## cal doc_emb first
-     process_doc = []
-     for graph_sents in sent_text:
-          prompt = "Generate a summary from documents' embeddings: "
-          full_doc = prompt + " ".join(graph_sents)
-          process_doc.append(full_doc)
-          
-     with torch.no_grad(), torch.cuda.amp.autocast():
-          docs_embs = encoder.encode_batch(process_doc, batch_size=16)
      
      ## cal sent level t5 emb
      graph_sent_embs = []
      for graph_sents in sent_text:
           process_sents = []
           for sent_id, sent in enumerate(graph_sents):
-               # previous 3 sents as context, adapt most 500 chars.
-               cont_start = max(sent_id - 3, 0)
-               context = " ".join(graph_sents[cont_start:sent_id])[:500]
+               cont_start = max(sent_id - CONTEXT_SENT_NUM, 0)
+               context = " ".join(graph_sents[cont_start:sent_id])[:512]
                cont_sent = f"[Context: {context}] {sent}"
                process_sents.append(cont_sent)
                
@@ -110,6 +100,16 @@ def get_combined_embed2(batch_graph_list, gnn_embeddings, sent_text):
           
           graph_sent_embs.append(sent_embs)
 
+     ## doc level t5 emb to provide doc infor
+     # process_doc = []
+     # for graph_sents in sent_text:
+     #      prompt = "Generate a summary from documents' embeddings: "
+     #      full_doc = prompt + " ".join(graph_sents)
+     #      process_doc.append(full_doc)
+          
+     # with torch.no_grad(), torch.cuda.amp.autocast():
+     #      docs_embs = encoder.encode_batch(process_doc, batch_size=16)
+     
      for i_th, graph in enumerate(batch_graph_list): # for each embs of graph
           graph_sent_num = graph['sentence'].x.shape[0]
           gnn_sent_embs = gnn_embeddings[start_ind: start_ind + graph_sent_num]
@@ -118,16 +118,11 @@ def get_combined_embed2(batch_graph_list, gnn_embeddings, sent_text):
           with torch.no_grad():
                gnn_norm = F.normalize(gnn_sent_embs, p=2, dim=-1)
                t5_norm = F.normalize(graph_sent_embs[i_th].to(device), p=2, dim=-1)
-               doc_emb = docs_embs[i_th].unsqueeze(0).to(device)
                
-               # fuse the whole doc infor
-               fused_gnn = gnn_norm + 0.1 * doc_emb
-               fused_t5 = t5_norm + 0.1 * doc_emb
-               
-               combined = torch.cat([fused_gnn, fused_t5], dim=-1)
+               combined = torch.cat([gnn_norm, t5_norm], dim=-1)
                concat_embedding_list.append(combined)
           
-          del gnn_norm, t5_norm, fused_gnn, doc_emb, fused_t5
+          del gnn_norm, t5_norm
           clean_memory()
      
      return concat_embedding_list
@@ -142,7 +137,6 @@ def fine_tune_t5(file_path, val_file_path, out_size, num_epochs = 20,
           train_dataset,
           batch_size=batch_size,
           shuffle=True,
-          # pin_memory=True, ## data has been in GPU while training gnn
           collate_fn=custom_collate_fn
      )
 
@@ -157,7 +151,6 @@ def fine_tune_t5(file_path, val_file_path, out_size, num_epochs = 20,
      
      ## models load
      try:
-          # gnn_model = torch.load('gnn_trained_weights.pt')
           gnn_model = model_fm.load_gnn()
           gnn_model = gnn_model.to(device)
           gnn_model.eval()
@@ -186,7 +179,6 @@ def fine_tune_t5(file_path, val_file_path, out_size, num_epochs = 20,
           ],
           weight_decay=0.01
      )
-     # scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=num_epochs)
      
      num_update_steps_per_epoch = math.ceil(len(train_dataloader) / accumulate_step)
      max_train_steps = num_epochs * num_update_steps_per_epoch
@@ -204,6 +196,8 @@ def fine_tune_t5(file_path, val_file_path, out_size, num_epochs = 20,
      start_epoch = 0
      accumulated_batches = 0
      global_step = 0
+     train_losses = [] # list to store training losses for plotting
+     val_losses = []
      if (checkpoint := ckpt_mgr.load(device)) is not None:
           custom_t5_model.load_state_dict(checkpoint['custom_t5_model_state'])
           optimizer.load_state_dict(checkpoint['optimizer_state'])
@@ -226,11 +220,14 @@ def fine_tune_t5(file_path, val_file_path, out_size, num_epochs = 20,
           else:
                print("No EarlyStopper state found in checkpoint. Initializing fresh.")
           
+          if 'train_losses' in checkpoint: train_losses = checkpoint['train_losses']
+          if 'val_losses' in checkpoint: val_losses = checkpoint['val_losses']
+          
           print(f"Resume training! From epoch {start_epoch}, batch {accumulated_batches}.")
      
      try:
           for epoch in range(start_epoch, num_epochs):
-               print(f"--- Training ---")
+               print(f"--- T5 Fine-tune ---")
                custom_t5_model.train()
                total_loss = 0.0
                processed_batches_this_epoch = 0
@@ -275,11 +272,12 @@ def fine_tune_t5(file_path, val_file_path, out_size, num_epochs = 20,
                          if global_step % 100 == 0: # Log every 100 steps example
                               print(f"[T5 Scheduler] Optimize Step {global_step}, Current LR: {scheduler.get_last_lr()[0]:.8f}")
                          
-               avg_loss = total_loss / processed_batches_this_epoch if processed_batches_this_epoch > 0 else 0
-               print(f"[Training] Epoch {epoch+1} / {num_epochs}, Loss: {avg_loss:.4f}, Learning Rate: {scheduler.get_last_lr()[0]:.6f}")
+               avg_train_loss = total_loss / processed_batches_this_epoch if processed_batches_this_epoch > 0 else 0
+               train_losses.append(avg_train_loss)
+               print(f"[Training] Epoch {epoch+1} / {num_epochs}, Loss: {avg_train_loss:.4f}, Learning Rate: {scheduler.get_last_lr()[0]:.6f}")
                
                # --- Validation for Early Stop ---
-               print('--- Validation ---')
+               print('--- T5 Validation ---')
                custom_t5_model.eval()
                total_val_loss = 0.0
                num_val_batches = 0
@@ -300,14 +298,13 @@ def fine_tune_t5(file_path, val_file_path, out_size, num_epochs = 20,
                               num_val_batches += 1
                
                avg_val_loss = total_val_loss / num_val_batches if num_val_batches > 0 else 0
+               val_losses.append(avg_val_loss)
                print(f"[Validation] Epoch {epoch+1}/{num_epochs}, Loss: {avg_val_loss:.4f}")
 
                # --- Early Stopping Check ---
                models_to_save = {'custom_t5_model': custom_t5_model}
                optimizers_to_save = {'optimizer': optimizer}
                schedulers_to_save = {'scheduler': scheduler}
-               if early_stopper(avg_val_loss, epoch, models_to_save, optimizers_to_save, schedulers_to_save, scaler, global_step):
-                    break # Stop training
                               
                ckpt_path = ckpt_mgr.save(
                     epoch=epoch,
@@ -318,9 +315,16 @@ def fine_tune_t5(file_path, val_file_path, out_size, num_epochs = 20,
                     accumulated_batches= len(train_dataloader),
                     global_step=global_step,
                     early_stopper_state=early_stopper.get_state(),
+                    train_losses=train_losses,
+                    val_losses=val_losses
                )
                print(f"[checkpoint saved] {epoch}-th epoch checkpoint has saved to path {ckpt_path}")
-                              
+               
+               if early_stopper(avg_val_loss, epoch, models_to_save, optimizers_to_save, 
+                              schedulers_to_save, scaler, global_step,
+                              train_losses_history=train_losses, val_losses_history=val_losses):
+                    break # Stop training
+               
                if resume and epoch == start_epoch:
                     resume = False
                     accumulated_batches = 0
@@ -351,6 +355,8 @@ def fine_tune_t5(file_path, val_file_path, out_size, num_epochs = 20,
           print("[Checkpoint] Best checkpoint not found. Using the model state from the last completed epoch.")
      
      model_fm.save_t5(custom_t5_model)
+     
+     print_and_save_loss_curve(train_losses, val_losses, early_stopper, label='T5 Fine-tune')
      
      print("--- T5 Fine-tune Finish! ---")
      del custom_t5_model
