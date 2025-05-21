@@ -43,25 +43,46 @@ def save_to_jsonl(data, filename):
                json_line = json.dumps(sample, ensure_ascii=False)
                f.write(json_line + "\n")
 
+import re
+
 def preprocess_function2(samples):
+     MAX_LEN = 1000000
+     
      if 'document' not in samples or not isinstance(samples['document'], list):
           raise ValueError("Invalid 'document' field in samples.")
 
+     # split by '|||||'
      doc_list = []
-     MAX_LEN = 1000000
      for doc in samples['document']:
           if not isinstance(doc, str):
                raise ValueError("Each 'document' item must be a string.")
-          doc = doc.replace('\n', ' ')
-          parts = [part.strip() for part in doc.split('|||||') if part.strip()]
+
+          parts = [
+               re.sub(
+                    r'\.+', '.',
+                    re.sub(r'\s+', ' ',
+                         part.strip()
+                         .replace('\n', '.')
+                         .replace('\r', '.')
+                    )
+                    .replace(' .', '.')
+                    .replace('. ', '.')
+               ).strip('.')
+               for part in doc.split('|||||')
+               if part.strip()
+          ]
           doc_list.append(parts)
 
-     converted_list = [[[item] for item in sublist if len(item) < MAX_LEN] for sublist in doc_list]
+     # doc to list
+     converted_list = [[
+          [item]
+          for item in sublist if len(item) < MAX_LEN and len(item) > 0]
+                         for sublist in doc_list]
 
-
+     
      if 'summary' not in samples or not isinstance(samples['summary'], list):
           raise ValueError("Invalid 'summary' field in samples.")
 
-     summary_list = [summary.replace('\n', ' ') for summary in samples['summary']]
+     summary_list = [summary[1:].strip() for summary in samples['summary']] ##去除 '-'
 
      return {"document": converted_list, "summary": summary_list}

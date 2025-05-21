@@ -96,18 +96,18 @@ class ModelCheckpointManager:
                print("[Checkpoint Manager] Best checkpoint not found.")
                return None
      
-     
+
+class DataType(Enum):
+     TRAIN = 'train'
+     VALIDATION = 'val'
+     TEST = 'test'
+          
 class DataCheckpointManager:
      class StepKey(Enum):
           PREDEFINE = "define_node"
           GRAPH = "create_graph"
           EMBED = "embed_graph"
           FINAL = "final_graph"
-
-     class DataType(Enum):
-          TRAIN = 'train'
-          VALIDATION = 'val'
-          TEST = 'test'
 
      def __init__(self, save_dir = os.path.join(parent_path, 'data')):
           self.save_dir = Path(save_dir)
@@ -132,7 +132,7 @@ class DataCheckpointManager:
           if step_name not in self._step_base_filenames:
                raise ValueError(f"Unknown step name: {step_name}")
 
-          valid_types = [dt.value for dt in self.DataType]
+          valid_types = [dt.value for dt in DataType]
           if dataset_type not in valid_types:
                raise ValueError(f"Invalid dataset_type: {dataset_type}. Use one of {valid_types}")
 

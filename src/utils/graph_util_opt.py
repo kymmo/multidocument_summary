@@ -13,9 +13,9 @@ import time
 import traceback
 
 from models.CheckPointManager import DataCheckpointManager
+from models.RelHetGraph import EdgeKeyTuple
 from utils.define_node import define_node_edge_opt_parallel
 from utils.model_utils import auto_workers, clean_memory
-from utils.Monitor import ResourceMonitor
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -495,10 +495,10 @@ def parallel_convert_graph_serializable(nx_graph):
                     serializable_graph_data['node_types']['sentence']['x'] = np.stack(sent_nodes_feat)
                     
           edge_data_temp = {
-               ('sentence', 'similarity', 'sentence'): {'indices': [], 'attrs': []},
-               ('sentence', 'pro_ant', 'sentence'): {'indices': [], 'attrs': []},
-               ('sentence', 'has', 'word'): {'indices': [], 'attrs': []},
-               ('word', 'in', 'sentence'): {'indices': [], 'attrs': []},
+               EdgeKeyTuple.SENT_SIM.value: {'indices': [], 'attrs': []},
+               EdgeKeyTuple.SENT_ANT.value: {'indices': [], 'attrs': []},
+               EdgeKeyTuple.SENT_WORD.value: {'indices': [], 'attrs': []},
+               EdgeKeyTuple.WORD_SENT.value: {'indices': [], 'attrs': []},
           }
 
           for from_node, to_node, k, attr in nx_graph.edges(keys=True, data=True):
@@ -514,13 +514,13 @@ def parallel_convert_graph_serializable(nx_graph):
                current_edge_key = None
                if edge_tp_attr == 'word_sent':
                     if node_type_from == 'sentence':
-                         current_edge_key = ('sentence', 'has', 'word')
+                         current_edge_key = EdgeKeyTuple.SENT_WORD.value
                     else:
-                         current_edge_key = ('word', 'in', 'sentence')
+                         current_edge_key = EdgeKeyTuple.WORD_SENT.value
                elif edge_tp_attr == 'pronoun_antecedent':
-                    current_edge_key = ('sentence', 'pro_ant', 'sentence')
+                    current_edge_key = EdgeKeyTuple.SENT_ANT.value
                elif edge_tp_attr == 'similarity':
-                    current_edge_key = ('sentence', 'similarity', 'sentence')
+                    current_edge_key = EdgeKeyTuple.SENT_SIM.value
 
                if current_edge_key and current_edge_key in edge_data_temp:
                     edge_data_temp[current_edge_key]['indices'].append([new_id_from, new_id_to])
@@ -553,7 +553,9 @@ def parallel_convert_graph_serializable(nx_graph):
           
           del word_nodes_feat, sent_nodes_feat, word_texts, sent_texts, edge_data_temp, node_map
 
-          
+          ###### test
+          print(f"  [DEBUG] serializable_graph_data: {serializable_graph_data}")
+          ##################
           return serializable_graph_data, pyg_id_to_sent_txt_map
      
      except Exception as e:

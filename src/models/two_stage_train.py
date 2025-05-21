@@ -14,7 +14,7 @@ from transformers import T5Tokenizer, T5ForConditionalGeneration, T5Config, get_
 from models.DatasetLoader import EvalDataset, custom_collate_fn
 from models.CustomT5 import CustomT5
 from models.gnn_train_t5 import train_gnn
-from models.CheckPointManager import ModelCheckpointManager, DataCheckpointManager
+from models.CheckPointManager import ModelCheckpointManager, DataType
 from utils.model_utils import freeze_model, clean_memory, print_gpu_memory, print_and_save_loss_curve
 from models.LongTextEncoder import LongTextEncoder
 from models.EarlyStopper import EarlyStopper
@@ -131,8 +131,7 @@ def fine_tune_t5(file_path, val_file_path, out_size, num_epochs = 20,
                batch_size = 8, accumulate_step = 4, patience = 5, sent_similarity_threshold=0.6,
                learning_rates_dict=None, warmup_ratio=0.1):
      ## data load
-     data_cpt = DataCheckpointManager()
-     train_dataset = EvalDataset(file_path=file_path, dataset_type=data_cpt.DataType.TRAIN.value, sent_similarity=sent_similarity_threshold)
+     train_dataset = EvalDataset(file_path=file_path, dataset_type=DataType.TRAIN.value, sent_similarity=sent_similarity_threshold)
      train_dataloader = data_DataLoader(
           train_dataset,
           batch_size=batch_size,
@@ -140,7 +139,7 @@ def fine_tune_t5(file_path, val_file_path, out_size, num_epochs = 20,
           collate_fn=custom_collate_fn
      )
 
-     val_dataset = EvalDataset(file_path=val_file_path, dataset_type=data_cpt.DataType.VALIDATION.value, sent_similarity=sent_similarity_threshold)
+     val_dataset = EvalDataset(file_path=val_file_path, dataset_type=DataType.VALIDATION.value, sent_similarity=sent_similarity_threshold)
      val_dataloader = data_DataLoader(
           val_dataset, batch_size=batch_size, shuffle=False, # No shuffle
           collate_fn=custom_collate_fn

@@ -133,7 +133,6 @@ def process_batch(batch_input):
      """
      global _subprocess_coref_nlp, _subprocess_st_model, _subprocess_keyword_model
 
-     # unpack input
      try:
           if not batch_input: return []
           edge_similarity_threshold = batch_input[0][1]
@@ -170,7 +169,7 @@ def process_batch(batch_input):
                     continue
 
 
-          if not all_doc_texts: # Handle case where all items were invalid
+          if not all_doc_texts: # all items were invalid
                return []
 
           # spaCy Processing
@@ -205,6 +204,9 @@ def process_batch(batch_input):
                          continue
                     doc = processed_docs_ordered[batch_list_index]
                     doc_sents = list(doc.sents)
+                    
+                    doc_node = current_sample_node_offset
+                    current_sample_node_offset += 1
                     
                     # --- Assign sentence node IDs (contiguous within sample) ---
                     doc_token_to_sample_node_list = [-1] * len(doc)
@@ -269,7 +271,6 @@ def process_batch(batch_input):
 
 
                # --- Assign word node IDs for the ENTIRE SAMPLE ---
-               current_word_node_offset = current_sample_node_offset
                kws_scores_map = defaultdict(list)
 
                for item_info in sample_items:
@@ -285,12 +286,12 @@ def process_batch(batch_input):
                
                for keyword, score_list in kws_scores_map.items():
                     score_avg = sum(score_list) / len(score_list) if score_list else 0.0
-                    sample_word_nodeId_map[keyword] = current_word_node_offset
-                    kws_scores_node_map[keyword] = (current_word_node_offset, score_avg) # store node ID and average score
+                    sample_word_nodeId_map[keyword] = current_sample_node_offset
+                    kws_scores_node_map[keyword] = (current_sample_node_offset, score_avg) # store node ID and average score
                     
                     phrase_matcher.add(f"{keyword}",[_subprocess_coref_nlp(keyword)]) # Add keyword to matcher
                     
-                    current_word_node_offset += 1
+                    current_sample_node_offset += 1
 
                # 3. Word-Sentence Edges for the ENTIRE SAMPLE
                for item_info in sample_items:

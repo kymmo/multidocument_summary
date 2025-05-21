@@ -7,7 +7,7 @@ from transformers import T5Tokenizer
 from utils.model_utils import clean_memory, freeze_model
 from models.CustomT5 import CustomT5, reshape_embedding_to_tensors
 from models.DatasetLoader import EvalDataset, custom_collate_fn
-from models.CheckPointManager import DataCheckpointManager
+from models.CheckPointManager import DataType
 from models.ModelFileManager import model_fm
 from models.two_stage_train import get_combined_embed2
 from utils.model_utils import rouge_eval, merge_dicts
@@ -30,8 +30,7 @@ def eval_t5_summary(eval_data_path, max_summary_length, batch_size = 16, sent_si
      fine_tuned_t5.eval()
      freeze_model(fine_tuned_t5)
      
-     data_cpt = DataCheckpointManager()
-     eval_dataset = EvalDataset(file_path=eval_data_path, dataset_type=data_cpt.DataType.TEST.value, sent_similarity=sent_similarity)
+     eval_dataset = EvalDataset(file_path=eval_data_path, dataset_type=DataType.TEST.value, sent_similarity=sent_similarity)
      eval_dataloader = data_DataLoader(
           eval_dataset,
           batch_size=batch_size,

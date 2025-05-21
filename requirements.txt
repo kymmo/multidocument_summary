@@ -147,6 +147,7 @@ numpy==1.26.4
     #   keybert
     #   matplotlib
     #   pandas
+    #   pytorch-metric-learning
     #   rouge-score
     #   scikit-learn
     #   scipy
@@ -209,6 +210,8 @@ python-dateutil==2.9.0.post0
     # via
     #   matplotlib
     #   pandas
+pytorch-metric-learning==2.8.1
+    # via -r requirements.in
 pytz==2024.2
     # via pandas
 pyyaml==6.0.2
@@ -239,6 +242,7 @@ safetensors==0.5.2
 scikit-learn==1.6.1
     # via
     #   keybert
+    #   pytorch-metric-learning
     #   sentence-transformers
 scipy==1.13.1
     # via
@@ -284,6 +288,7 @@ tokenizers==0.21.0
 torch==2.3.0
     # via
     #   accelerate
+    #   pytorch-metric-learning
     #   sentence-transformers
 torch-geometric==2.6.1
     # via -r requirements.in
@@ -292,6 +297,7 @@ tqdm==4.67.1
     #   datasets
     #   huggingface-hub
     #   nltk
+    #   pytorch-metric-learning
     #   sentence-transformers
     #   spacy
     #   torch-geometric
