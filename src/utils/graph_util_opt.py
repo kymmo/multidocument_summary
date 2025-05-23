@@ -159,7 +159,7 @@ def parallel_create_graph(args):
      Ensures graph attributes are picklable.
      """
      try:
-          word_node_map, sent_node_map, edges_data = args
+          word_node_map, sent_node_map, edges_data, doc_node_list = args
           graph = nx.MultiDiGraph()
 
           # Add word nodes
@@ -173,6 +173,10 @@ def parallel_create_graph(args):
                          for s_node_id in s_node_id_list]
           graph.add_nodes_from(sent_nodes)
 
+          # Add document nodes
+          doc_nodes = [(doc_node_id, {"type": "document"}) for doc_node_id in doc_node_list]
+          graph.add_nodes_from(doc_nodes)
+          
           # Add edges
           edges = []
           for (node1, node2), edge_list in edges_data.items():
@@ -220,6 +224,7 @@ def embed_nodes_with_rel_pos(graphs, word_emb_batch_size=64, sentence_emb_batch_
                     sentence_node_ids = []
                     word_texts = []
                     word_node_ids = []
+                    doc_node_ids = []
 
                     for node, data in graph.nodes(data=True):
                          node_type = data.get('type')
@@ -231,6 +236,9 @@ def embed_nodes_with_rel_pos(graphs, word_emb_batch_size=64, sentence_emb_batch_
                          elif node_type == 'word':
                               word_texts.append(node_text_data)
                               word_node_ids.append(node)
+                         elif node_type == 'document':
+                              doc_node_ids.append(node)
+                         
                     
                     # --- Sentence Embedding ---
                     final_sentence_embed_id_map = {}
@@ -265,8 +273,42 @@ def embed_nodes_with_rel_pos(graphs, word_emb_batch_size=64, sentence_emb_batch_
                          for idx, node_id in enumerate(sentence_node_ids):
                               final_sentence_embed_id_map[node_id] = final_main_sent_embeddings[idx]
                     else:
-                         print(f"\nWarning: No sentence embeddings generated for graph {i} (List was empty).")
+                         print(f"[Warning] No sentence embeddings generated for graph {i}.")
 
+
+                    # --- Doc Embedding --
+                    final_doc_embed_id_map = {}
+                    if sentence_node_ids:
+                         doc_node_ids.sort()
+                         num_sent_previous = 0
+                         doc_id_sent_id_map = {} # get doc-sent node ids
+                         for idx, doc_id in enumerate(doc_node_ids):
+                              start_point = doc_id + 1
+                              end_point = None
+                              if idx + 1 < len(doc_node_ids):
+                                   end_point = doc_node_ids[idx + 1] - 1
+                                   num_sent_previous += end_point - start_point + 1
+                              else:
+                                   end_point = start_point + (len(sentence_node_ids) - num_sent_previous - 1)
+
+                              doc_id_sent_id_map[doc_id] = (start_point, end_point)
+                         
+                         ## average sent_emb to get doc_emb
+                         for doc_id, (start_sent_id, end_sent_id) in doc_id_sent_id_map.items():
+                              temp_sent_embs = []
+                              for k in range(start_sent_id, end_sent_id + 1):
+                                   temp_sent_embs.append(final_sentence_embed_id_map[k])
+                              
+                              if temp_sent_embs:
+                                   doc_embedding = torch.mean(torch.stack(temp_sent_embs, dim=0), dim=0)
+                              else:
+                                   doc_embedding = torch.zeros_like(final_sentence_embed_id_map[0])
+
+                              final_doc_embed_id_map[doc_id] = doc_embedding
+                    else:
+                         print(f"[Warning] No document embeddings generated for graph {i}.")
+
+                    
                     # --- Word Embedding ---
                     final_word_embed_id_map = {}
                     if word_node_ids:
@@ -298,16 +340,16 @@ def embed_nodes_with_rel_pos(graphs, word_emb_batch_size=64, sentence_emb_batch_
                          print(f"\nWarning: No word embeddings generated for graph {i} (List was empty).")
 
                     # --- Assign Embeddings to Graph Nodes ---
-                    nodes_assigned_count = 0
                     for node_id, node_data in graph.nodes(data=True):
                          if node_data.get('type') == 'sentence':
                               if node_id in final_sentence_embed_id_map:
                                    graph.nodes[node_id]['embedding'] = final_sentence_embed_id_map[node_id]
-                                   nodes_assigned_count += 1
                          elif node_data.get('type') == 'word':
                               if node_id in final_word_embed_id_map:
                                    graph.nodes[node_id]['embedding'] = final_word_embed_id_map[node_id]
-                                   nodes_assigned_count += 1
+                         elif node_data.get('type') == 'document':
+                              if node_id in final_doc_embed_id_map:
+                                   graph.nodes[node_id]['embedding'] = final_doc_embed_id_map[node_id]
 
                     embedded_graphs.append(graph)
 
@@ -450,10 +492,12 @@ def parallel_convert_graph_serializable(nx_graph):
      node_map = {}
      sent_id = 0
      word_id = 0
+     doc_id = 0
      word_nodes_feat = []
      word_texts = []
      sent_nodes_feat = []
      sent_texts = []
+     doc_nodes_feat = []
      
      try:
           for node, data in nx_graph.nodes(data=True):
@@ -463,19 +507,23 @@ def parallel_convert_graph_serializable(nx_graph):
                     print(f"Warning: Node {node} of type {cur_type} has no 'embedding' attribute.")
                     pass
                          
-               text = data['text']
                if cur_type == 'word':
                     if embed is not None:
                          word_nodes_feat.append(embed)
-                    word_texts.append(str(text))
+                    word_texts.append(str(data['text']))
                     node_map[node] = ('word', word_id)
                     word_id += 1
                elif cur_type == 'sentence':
                     if embed is not None:
                          sent_nodes_feat.append(embed)
-                    sent_texts.append(str(text[2]))
+                    sent_texts.append(str(data['text'][2]))
                     node_map[node] = ('sentence', sent_id)
                     sent_id += 1
+               elif cur_type == 'document':
+                    if embed is not None:
+                         doc_nodes_feat.append(embed)
+                    node_map[node] = ('document', doc_id)
+                    doc_id += 1
 
           serializable_graph_data = {
                'node_types': {},
@@ -485,20 +533,26 @@ def parallel_convert_graph_serializable(nx_graph):
           if word_id > 0:
                serializable_graph_data['node_types']['word'] = {'text': word_texts}
                if word_nodes_feat:
-                    # serializable_graph_data['node_types']['word']['x'] = torch.stack(word_nodes_feat).numpy()
                     serializable_graph_data['node_types']['word']['x'] = np.stack(word_nodes_feat)
 
           if sent_id > 0:
                serializable_graph_data['node_types']['sentence'] = {'text': sent_texts}
                if sent_nodes_feat:
-                    # serializable_graph_data['node_types']['sentence']['x'] = torch.stack(sent_nodes_feat).numpy()
                     serializable_graph_data['node_types']['sentence']['x'] = np.stack(sent_nodes_feat)
-                    
+          
+          if doc_id > 0:
+               serializable_graph_data['node_types']['document'] = {}
+               if doc_nodes_feat:
+                    serializable_graph_data['node_types']['document']['x'] = np.stack(doc_nodes_feat)
+          
+               
           edge_data_temp = {
                EdgeKeyTuple.SENT_SIM.value: {'indices': [], 'attrs': []},
                EdgeKeyTuple.SENT_ANT.value: {'indices': [], 'attrs': []},
                EdgeKeyTuple.SENT_WORD.value: {'indices': [], 'attrs': []},
                EdgeKeyTuple.WORD_SENT.value: {'indices': [], 'attrs': []},
+               EdgeKeyTuple.DOC_SENT.value: {'indices': [], 'attrs': []},
+               EdgeKeyTuple.SENT_DOC.value: {'indices': [], 'attrs': []},
           }
 
           for from_node, to_node, k, attr in nx_graph.edges(keys=True, data=True):
@@ -521,6 +575,11 @@ def parallel_convert_graph_serializable(nx_graph):
                     current_edge_key = EdgeKeyTuple.SENT_ANT.value
                elif edge_tp_attr == 'similarity':
                     current_edge_key = EdgeKeyTuple.SENT_SIM.value
+               elif edge_tp_attr == 'doc_sent':
+                    if node_type_from == 'document':
+                         current_edge_key = EdgeKeyTuple.DOC_SENT.value
+                    else:
+                         current_edge_key = EdgeKeyTuple.SENT_DOC.value
 
                if current_edge_key and current_edge_key in edge_data_temp:
                     edge_data_temp[current_edge_key]['indices'].append([new_id_from, new_id_to])
@@ -553,139 +612,12 @@ def parallel_convert_graph_serializable(nx_graph):
           
           del word_nodes_feat, sent_nodes_feat, word_texts, sent_texts, edge_data_temp, node_map
 
-          ###### test
-          print(f"  [DEBUG] serializable_graph_data: {serializable_graph_data}")
-          ##################
           return serializable_graph_data, pyg_id_to_sent_txt_map
      
      except Exception as e:
           print(f"[ERROR] An exception occurred while converting graphs: {e}")
           traceback.print_exc()
           return e
-
-def create_embed_graphs_opt(docs_list, sent_similarity=0.6):
-     """
-     Main function to create and embed graphs from a list of documents.
-     Uses checkpointing, parallel graph creation/conversion, and batched embedding.
-     """
-     data_cpt = DataCheckpointManager()
-     
-     if (latest_step := data_cpt.get_latest_step()):
-          print(f"Resume from step: [{latest_step}]")
-     else:
-          print("Starting from scratch.")
-
-     define_node_key = data_cpt.StepKey.PREDEFINE.value
-     graph_create_key = data_cpt.StepKey.GRAPH.value
-     embed_graph_key = data_cpt.StepKey.EMBED.value
-
-     # --- Step 1: Define Nodes and Edges ---
-     word_nodeId_list, sent_nodeId_list, edge_data_list, sentid_node_map_list = None, None, None, None
-
-     if not latest_step or latest_step in [define_node_key]:
-          if not latest_step:
-               print("Step 1: Defining nodes and edges...")
-               start_time = time.time()
-               
-               word_nodeId_list, sent_nodeId_list, edge_data_list, sentid_node_map_list = \
-                    define_node_edge_opt_parallel(docs_list, sent_similarity)
-               
-               data_cpt.save_step(define_node_key, {
-                    'word_nodeId_list': word_nodeId_list,
-                    'sent_nodeId_list': sent_nodeId_list,
-                    'edge_data_list': edge_data_list,
-                    'sentid_node_map_list': sentid_node_map_list
-               })
-               print(f"Step 1 finished in {time.time() - start_time:.2f}s")
-          else:
-               print("Loading data from Step 1 checkpoint...")
-               data = data_cpt.load_step(define_node_key)
-               word_nodeId_list = data['word_nodeId_list']
-               sent_nodeId_list = data['sent_nodeId_list']
-               edge_data_list = data['edge_data_list']
-               sentid_node_map_list = data['sentid_node_map_list']
-
-     # --- Step 2: Create NetworkX Graphs (Parallel) ---
-     if not latest_step or latest_step in [define_node_key, graph_create_key]:
-          if not latest_step or latest_step != graph_create_key: # Run if starting or finished step 1
-               print("Step 2: Creating NetworkX graphs in parallel...")
-               start_time = time.time()
-               num_items = len(word_nodeId_list)
-               num_workers = auto_workers()
-               pool_args = list(zip(word_nodeId_list, sent_nodeId_list, edge_data_list))
-
-               if num_items > 0:
-                    with multiprocessing.get_context("spawn").Pool(num_workers) as pool:
-                         graph_list = list(tqdm(pool.imap(parallel_create_graph, pool_args), total=num_items, desc="Creating NX Graphs"))
-               else:
-                    graph_list = []
-                    
-               data_cpt.save_step(graph_create_key, {'graph_list': graph_list})
-               print(f"Step 2 finished in {time.time() - start_time:.2f}s")
-          else:
-               print("Loading data from Step 2 checkpoint...")
-               data = data_cpt.load_step(graph_create_key)
-               graph_list = data['graph_list']
-               print("Loading associated data from Step 1 checkpoint...")
-               define_data = data_cpt.load_step(define_node_key)
-               sentid_node_map_list = define_data['sentid_node_map_list']
-
-     # --- Step 3: Embed Graph Nodes (Batched, on GPU) ---
-     embedded_graph_list = None # This will hold graphs with CPU embeddings for saving/conversion
-     if not latest_step or latest_step in [define_node_key, graph_create_key, embed_graph_key]:
-          if not latest_step or latest_step != embed_graph_key: # Run if starting or finished step 1 or 2
-               print("Step 3: Embedding graph nodes (using GPU if available)...")
-               start_time = time.time()
-               # embedded_graphs_gpu = embed_nodes_with_abs_pos(graph_list, sentid_node_map_list)
-               embedded_graphs_gpu = embed_nodes_with_rel_pos(graph_list)
-               
-               ## transfers to cpu
-               print("  Moving embeddings to CPU for checkpointing/conversion...")
-               embedded_graph_list = [] # This will store graphs with CPU embeddings
-               for g in embedded_graphs_gpu:
-                    # modify in place for efficiency
-                    for node, data in g.nodes(data=True):
-                         if 'embedding' in data and isinstance(data['embedding'], torch.Tensor):
-                              data['embedding'] = data['embedding'].detach().cpu()
-                    embedded_graph_list.append(g)
-
-               del embedded_graphs_gpu
-               clean_memory()
-               
-               data_cpt.save_step(embed_graph_key, { 'embedded_graph_list': embedded_graph_list})
-               print(f"Step 3 finished in {time.time() - start_time:.2f}s")
-          else:
-               print("Loading data from Step 3 checkpoint...")
-               data = data_cpt.load_step(embed_graph_key)
-               embedded_graph_list = data['embedded_graph_list']
-               for g in embedded_graph_list:
-                    for node, data in g.nodes(data=True):
-                         if 'embedding' in data and isinstance(data['embedding'], torch.Tensor) and data['embedding'].requires_grad:
-                              data['embedding'] = data['embedding'].detach()
-
-     # --- Step 4: Convert to PyG HeteroData (Parallel) ---
-     print("Step 4: Converting graphs to PyG format in parallel (order preserved)...")
-     start_time = time.time()
-     pyg_graph_list_cpu = []
-     node_sent_map_list = []
-
-     num_items = len(embedded_graph_list)
-     num_workers = auto_workers()
-     print(f"Using {num_workers} workers for conversion.")
-
-     if num_items > 0:
-          # Use multiprocessing Pool with imap for ordered results
-          with multiprocessing.get_context("spawn").Pool(num_workers) as pool:
-               results = list(tqdm(pool.imap(parallel_convert_graph_serializable, embedded_graph_list), total=num_items, desc="Converting to PyG"))
-
-          pyg_graph_list_cpu = [res[0] for res in results]
-          node_sent_map_list = [res[1] for res in results]
-     else:
-          pyg_graph_list_cpu = []
-          node_sent_map_list = []
-     print(f"Step 4 finished in {time.time() - start_time:.2f}s")
-     
-     return pyg_graph_list_cpu, node_sent_map_list
 
 def get_embedded_pyg_graphs(dataset_type, docs_list, sent_similarity):
      data_cpt = DataCheckpointManager()
@@ -715,13 +647,14 @@ def get_embedded_pyg_graphs(dataset_type, docs_list, sent_similarity):
                print(f"Step 1: Defining nodes and edges for {dataset_type} dataset...")
                start_time = time.time()
 
-               word_nodeId_list, sent_nodeId_list, edge_data_list, sentid_node_map_list = define_node_edge_opt_parallel(docs_list, sent_similarity)
+               word_nodeId_list, sent_nodeId_list, edge_data_list, sentid_node_map_list, doc_node_list = define_node_edge_opt_parallel(docs_list, sent_similarity)
 
                data_cpt.save_step(step_name=define_node_key, data={
                     'word_nodeId_list': word_nodeId_list,
                     'sent_nodeId_list': sent_nodeId_list,
                     'edge_data_list': edge_data_list,
-                    'sentid_node_map_list': sentid_node_map_list
+                    'sentid_node_map_list': sentid_node_map_list,
+                    'doc_node_list': doc_node_list
                }, dataset_type=dataset_type)
                print(f"Step 1 finished in {time.time() - start_time:.2f}s for {dataset_type} dataset")
           else:
@@ -731,6 +664,7 @@ def get_embedded_pyg_graphs(dataset_type, docs_list, sent_similarity):
                     sent_nodeId_list = data['sent_nodeId_list']
                     edge_data_list = data['edge_data_list']
                     sentid_node_map_list = data['sentid_node_map_list']
+                    doc_node_list = data['doc_node_list']
 
      # --- Step 2: Create NetworkX Graphs (Parallel) ---
      graph_list = None
@@ -739,7 +673,7 @@ def get_embedded_pyg_graphs(dataset_type, docs_list, sent_similarity):
                print(f"Step 2: Creating NetworkX graphs in parallel for {dataset_type} dataset...")
                start_time = time.time()
                num_items = len(word_nodeId_list)
-               pool_args = list(zip(word_nodeId_list, sent_nodeId_list, edge_data_list))
+               pool_args = list(zip(word_nodeId_list, sent_nodeId_list, edge_data_list, doc_node_list))
 
                graph_list = []
                if num_items > 0:
@@ -820,14 +754,14 @@ def get_embedded_pyg_graphs(dataset_type, docs_list, sent_similarity):
                                    ## convert to hetero data
                                    het_graph = HeteroData()
 
-                                   # Process Node Types
+                                   # Process Node
                                    for node_type, node_data in serializable_graph_data['node_types'].items():
                                         if 'text' in node_data:
                                              het_graph[node_type].text = node_data['text']
                                         if 'x' in node_data:
                                              het_graph[node_type].x = torch.from_numpy(node_data['x']).detach()
                                    
-                                   # Process Edge Types
+                                   # Process Edge
                                    for edge_key_tuple, edge_data in serializable_graph_data['edge_types'].items():
                                         het_graph[edge_key_tuple].edge_index = torch.from_numpy(edge_data['edge_index']).detach()
                                         het_graph[edge_key_tuple].edge_attr = torch.from_numpy(edge_data['edge_attr']).detach()

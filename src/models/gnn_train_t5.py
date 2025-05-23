@@ -6,19 +6,19 @@ import torch.nn.functional as F
 from torch_geometric.loader import DataLoader as geo_DataLoader
 from pytorch_metric_learning import losses
 import traceback
+from collections import deque
 
-from models.RelHetGraph import RelHetGraph
+from models.RelHetGraph import RelHetGraph, EdgeKeyTuple
 from models.DatasetLoader import OptimizedDataset
 from models.CheckPointManager import ModelCheckpointManager, DataType
 from models.EarlyStopper import EarlyStopper
 from models.ModelFileManager import model_fm
 from utils.model_utils import freeze_model, clean_memory, print_gpu_memory, print_and_save_loss_curve
-from models.LinkPredictor import LinkPredictor
 
-def train_gnn(file_path, hidden_size, out_size, num_heads, val_file_path, sentence_in_size = 768, word_in_size = 768, 
+def train_gnn(file_path, hidden_size, out_size, num_heads, val_file_path, sentence_in_size = 768, word_in_size = 768, projection_dim = 768,
                learning_rate=0.001, num_epochs=20, feat_drop=0.2, attn_drop=0.2, batch_size=32, save_method='entire_model', patience=5, sent_similarity_threshold = 0.6,
                device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')):
-     """Trains the HetGNN model using a proxy task."""
+
      clean_memory()
      print(f"GNN training task runing on {device}")
 
@@ -40,11 +40,16 @@ def train_gnn(file_path, hidden_size, out_size, num_heads, val_file_path, senten
           num_workers=0,
      )
      
-     gnn_model = RelHetGraph(hidden_size, out_size, num_heads, sentence_in_size, word_in_size , feat_drop, attn_drop).to(device)
-     link_predictor = LinkPredictor(out_size, hidden_neurons_scale_factor=0.5, dropout_rate=0.1).to(device)
-     optimizer = torch.optim.Adam(
-          list(gnn_model.parameters()) + list(link_predictor.parameters()), 
-          lr=learning_rate)
+     gnn_model = RelHetGraph(
+          hidden_size=hidden_size, 
+          out_size=out_size, 
+          projection_dim=projection_dim,
+          num_heads=num_heads, 
+          sentence_in_size=sentence_in_size, 
+          word_in_size=word_in_size , 
+          document_in_size=sentence_in_size, ## avg of sent embs
+          feat_drop=feat_drop, attn_drop=attn_drop).to(device)
+     optimizer = torch.optim.Adam(gnn_model.parameters(), lr=learning_rate)
      scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=num_epochs)
      scaler = torch.cuda.amp.GradScaler()
 
@@ -59,7 +64,6 @@ def train_gnn(file_path, hidden_size, out_size, num_heads, val_file_path, senten
      val_losses = []
      if (checkpoint := ckpt_mgr.load(device)) is not None:
           gnn_model.load_state_dict(checkpoint['gnn_model_state'])
-          link_predictor.load_state_dict(checkpoint['link_predictor_state'])
           optimizer.load_state_dict(checkpoint['optimizer_state'])
           if 'scheduler_state' in checkpoint:
                scheduler.load_state_dict(checkpoint['scheduler_state'])
@@ -71,7 +75,6 @@ def train_gnn(file_path, hidden_size, out_size, num_heads, val_file_path, senten
                early_stopper.load_state(checkpoint['early_stopper_state'])
                print("Found EarlyStopper state in checkpoint, loaded.")
           else:
-               # if resuming from an older checkpoint saved before this feature was added
                print("No EarlyStopper state found in checkpoint. Initializing fresh.")
           
           if 'train_losses' in checkpoint: train_losses = checkpoint['train_losses']
@@ -84,39 +87,28 @@ def train_gnn(file_path, hidden_size, out_size, num_heads, val_file_path, senten
           for epoch in range(start_epoch, num_epochs):
                last_epoch_completed = epoch
                gnn_model.train()
-               link_predictor.train()
                total_train_loss_epoch  = 0
                num_train_batches_processed = 0
+               train_empty_batch_cnt = 0
                
                print('--- GNN Training ---')
                for batch_idx, batch in enumerate(train_dataloader):
                     batch = batch.to(device)
-                    masked_graph = get_masked_graph(batch, k=2)
-                    
-                    if masked_graph is None:
-                         print(f"Skipping training batch {batch_idx} due to get_masked_graph returning None.")
-                         continue
-                    
+
                     optimizer.zero_grad()
                     with torch.cuda.amp.autocast():
-                         sentence_feat = masked_graph['sentence'].x
-                         word_feat = masked_graph['word'].x
-                         corrupted_sentence_feat = F.dropout(sentence_feat, p=0.1, training=gnn_model.training)
-                         sentence_embeddings = gnn_model(masked_graph, corrupted_sentence_feat, word_feat)
+                         sentence_embeddings, projected_sent_embeddings = gnn_model(batch)
                          
-                         # predicted similarity edge
-                         pos_pairs_inds = masked_graph[('sentence', 'pos_sim_edge', 'sentence')].edge_index
-                         neg_pairs_inds = masked_graph[('sentence', 'neg_sim_edge', 'sentence')].edge_index
-                         pos_logits = link_predictor(sentence_embeddings[pos_pairs_inds[0]], sentence_embeddings[pos_pairs_inds[1]])
-                         neg_logits = link_predictor(sentence_embeddings[neg_pairs_inds[0]], sentence_embeddings[neg_pairs_inds[1]])
-                         all_link_logits = torch.cat([pos_logits, neg_logits], dim=0)
-
-                         # labels
-                         pos_labels = torch.ones_like(pos_logits)
-                         neg_labels = torch.zeros_like(neg_logits)
-                         all_labels = torch.cat([pos_labels, neg_labels], dim=0)
-
-                         loss = F.binary_cross_entropy_with_logits(all_link_logits, all_labels)
+                         # contrasive learning
+                         s2s_keys = [EdgeKeyTuple.SENT_SIM.value, EdgeKeyTuple.SENT_ANT.value]
+                         loss = compute_contractive_learning_loss(
+                              projected_sentence_embeddings=projected_sent_embeddings,
+                              graph=batch,
+                              positive_edge_keys=s2s_keys)
+                    
+                         if loss is None:
+                              train_empty_batch_cnt += 1
+                              continue
                     
                     if torch.is_tensor(loss) and not torch.isnan(loss) and loss.requires_grad:
                          scaler.scale(loss).backward()
@@ -126,57 +118,49 @@ def train_gnn(file_path, hidden_size, out_size, num_heads, val_file_path, senten
                          num_train_batches_processed += 1
                     else:
                          print(f"[Warning] NaN loss in training batch {batch_idx}. Skipping update.")
-
                
                avg_train_loss = total_train_loss_epoch / num_train_batches_processed if num_train_batches_processed > 0 else 0
                train_losses.append(avg_train_loss)
+               print(f"[Training] Get {train_empty_batch_cnt} / {len(train_dataloader)} EMPTY batch.")
                print(f"[Training] Epoch {epoch + 1} / {num_epochs}, Loss: {avg_train_loss:.4f}, Training Learning Rate: {scheduler.get_last_lr()[0]:.6f}")
+               
                
                # --- Validation for Early Stop ---
                print('--- GNN Validation ---')
                gnn_model.eval()
-               link_predictor.eval()
                total_val_loss = 0
                num_val_batches_processed = 0
+               val_empty_batch_cnt = 0
                with torch.no_grad():
                     for batch_idx_val, batch in enumerate(val_dataloader):
                          batch = batch.to(device)
-                         masked_graph = get_masked_graph(batch, k=2)
-                         
-                         if masked_graph is None:
-                              print(f"Skipping validation batch {batch_idx_val} due to get_masked_graph returning None.")
-                              continue
                          
                          with torch.cuda.amp.autocast():
-                              sentence_feat = masked_graph['sentence'].x
-                              word_feat = masked_graph['word'].x
-                              sentence_embeddings = gnn_model(masked_graph, sentence_feat, word_feat)
-                              
-                              # predicted similarity edge
-                              pos_pairs_inds = masked_graph[('sentence', 'pos_sim_edge', 'sentence')].edge_index
-                              neg_pairs_inds = masked_graph[('sentence', 'neg_sim_edge', 'sentence')].edge_index
-                              pos_logits = link_predictor(sentence_embeddings[pos_pairs_inds[0]], sentence_embeddings[pos_pairs_inds[1]])
-                              neg_logits = link_predictor(sentence_embeddings[neg_pairs_inds[0]], sentence_embeddings[neg_pairs_inds[1]])
-                              all_link_logits = torch.cat([pos_logits, neg_logits], dim=0)
-
-                              # labels
-                              pos_labels = torch.ones_like(pos_logits)
-                              neg_labels = torch.zeros_like(neg_logits)
-                              all_labels = torch.cat([pos_labels, neg_labels], dim=0)
-
-                              val_loss = F.binary_cross_entropy_with_logits(all_link_logits, all_labels)
+                              sentence_embeddings, projected_sent_embeddings = gnn_model(batch)
                          
+                              # contrasive learning
+                              s2s_keys = [EdgeKeyTuple.SENT_SIM.value, EdgeKeyTuple.SENT_ANT.value]
+                              val_loss = compute_contractive_learning_loss(
+                                   projected_sentence_embeddings=projected_sent_embeddings,
+                                   graph=batch,
+                                   positive_edge_keys=s2s_keys)
+                         
+                              if val_loss is None:
+                                   val_empty_batch_cnt += 1
+                                   continue
+                              
                          if torch.is_tensor(val_loss) and not torch.isnan(val_loss):
-                              total_val_loss += loss.item()
+                              total_val_loss += val_loss.item()
                               num_val_batches_processed += 1
                          elif torch.isnan(val_loss):
                               print(f"Warning: NaN loss in validation batch {batch_idx_val}.")
                               
                avg_val_loss = total_val_loss / num_val_batches_processed if num_val_batches_processed > 0 else 0
                val_losses.append(avg_val_loss)
+               print(f"[Validation] Get {val_empty_batch_cnt} / {len(val_dataloader)} EMPTY batch.")
                print(f"[Validation] Epoch {epoch + 1}/{num_epochs}, Loss: {avg_val_loss:.4f}")
      
-               models_to_save = {'gnn_model': gnn_model, 'link_predictor': link_predictor}
+               models_to_save = {'gnn_model': gnn_model}
                optimizers_to_save = {'optimizer': optimizer}
                schedulers_to_save = {'scheduler': scheduler}
                
@@ -207,7 +191,6 @@ def train_gnn(file_path, hidden_size, out_size, num_heads, val_file_path, senten
           emergency_path = ckpt_mgr._get_filepath(epoch=current_epoch, emergency=True)
           torch.save({
                'gnn_model_state': gnn_model.state_dict(),
-               'link_predictor_state': link_predictor.state_dict(),
                'optimizer_state': optimizer.state_dict(),
                'scheduler_state': scheduler.state_dict(),
                'scaler': scaler.state_dict(),
@@ -223,9 +206,17 @@ def train_gnn(file_path, hidden_size, out_size, num_heads, val_file_path, senten
      best_checkpoint = ckpt_mgr.load_best(device=device)
      best_gnn_model = None
      if best_checkpoint:
-          best_gnn_model = RelHetGraph(hidden_size, out_size, num_heads, sentence_in_size, word_in_size , feat_drop, attn_drop).to(device)
+          best_gnn_model = RelHetGraph(
+          hidden_size=hidden_size, 
+          out_size=out_size, 
+          projection_dim=projection_dim,
+          num_heads=num_heads, 
+          sentence_in_size=sentence_in_size, 
+          word_in_size=word_in_size , 
+          document_in_size=sentence_in_size, ## avg of sent embs
+          feat_drop=feat_drop, attn_drop=attn_drop).to(device)
+          
           best_gnn_model.load_state_dict(best_checkpoint['gnn_model_state'])
-          link_predictor.load_state_dict(best_checkpoint['link_predictor_state'])
           gnn_model = best_gnn_model
           print(f"[Checkpoint] The least-loss GNN model (from epoch {best_checkpoint.get('epoch', 'N/A')}) is reloaded from checkpoint.")
      
@@ -247,15 +238,14 @@ def train_gnn(file_path, hidden_size, out_size, num_heads, val_file_path, senten
 def compute_contractive_learning_loss(
           projected_sentence_embeddings,
           graph,
-          positive_edge_key_tuples,
-          temperature = 1.0,
+          positive_edge_keys,
+          temperature = 0.1,
           min_cluster_size_for_positives = 2,
           device = torch.device('cuda' if torch.cuda.is_available() else 'cpu'),
      ):
      """
-     Computes contrastive loss based on graph connectivity, treating the input 'data'
-     as a single graph for label generation.
-
+     Computes contrastive loss based on graph connectivity.
+     
      Args:
           projected_sentence_embeddings: Embeddings from the GNN's projection head.
           data: The PyG HeteroData object.
@@ -270,19 +260,21 @@ def compute_contractive_learning_loss(
      """
      num_total_sentences = projected_sentence_embeddings.size(0)
 
-     if num_total_sentences == 0:
-          print("[WARN] No sentence embeddings provided for contrastive loss.")
-          return torch.tensor(0.0, device=device, requires_grad=True)
+     if num_total_sentences == 0 or num_total_sentences < min_cluster_size_for_positives:
+          print("[WARN] [Contrasive Learning] No sentence embeddings provided for contrastive loss.")
+          return None
 
      # --- 1. Generate Labels
      graph_labels = torch.full((num_total_sentences,), -1, dtype=torch.long, device=device)
-     
      adj = defaultdict(list)
-     for edge_key_tuple in positive_edge_key_tuples:
-          if edge_key_tuple[0] != 'sentence' or edge_key_tuple[2] != 'sentence':
+     for edge_key_tuple in positive_edge_keys:
+          if not (isinstance(edge_key_tuple, tuple) and len(edge_key_tuple) == 3 and \
+                    edge_key_tuple[0] == 'sentence' and edge_key_tuple[2] == 'sentence'):
+               print(f"[WARN] [Contrasive Learning] Skipping non-sentence-to-sentence edge type {edge_key_tuple} for S2S component labeling.")
                continue # only consider sentence-to-sentence positive edges for these labels
           
-          if edge_key_tuple not in graph.edge_index_dict:
+          if edge_key_tuple not in graph.edge_index_dict or graph.edge_index_dict[edge_key_tuple].numel() == 0:
+               print(f"[WARN] [Contrasive Learning] Edge type {edge_key_tuple} is not in graph.")
                continue
 
           edge_index = graph.edge_index_dict[edge_key_tuple]
@@ -290,16 +282,19 @@ def compute_contractive_learning_loss(
                u, v = edge_index[0, k].item(), edge_index[1, k].item()
                adj[u].append(v)
 
+     if not adj: ## graph data is empty
+          return None
+     
      # BFS to find connected components
      current_component_id = 0
      for node_start_idx in range(num_total_sentences):
           if graph_labels[node_start_idx] == -1:
                component_nodes_indices = []
-               q = [node_start_idx]
+               q = deque([node_start_idx])
                graph_labels[node_start_idx] = current_component_id
                component_nodes_indices.append(node_start_idx)
                while len(q) > 0:
-                    curr_u = q.pop(0)
+                    curr_u = q.popleft()
                     for curr_v in adj.get(curr_u, []):
                          if graph_labels[curr_v] == -1:
                               graph_labels[curr_v] = current_component_id
@@ -308,9 +303,10 @@ def compute_contractive_learning_loss(
                
                # If a component is too small, re-label its members to be distinct singletons
                if len(component_nodes_indices) < min_cluster_size_for_positives:
-                    for node_idx_in_small_component in component_nodes_indices:
-                         graph_labels[node_idx_in_small_component] = current_component_id
-                         current_component_id += 1
+                    temp_singleton_id_start = current_component_id
+                    for i, node_idx_in_small_component in enumerate(component_nodes_indices):
+                         graph_labels[node_idx_in_small_component] = temp_singleton_id_start + i
+                    current_component_id = temp_singleton_id_start + len(component_nodes_indices)
                else:
                     current_component_id += 1
 
@@ -319,7 +315,6 @@ def compute_contractive_learning_loss(
      unassigned_mask = (graph_labels == -1)
      if torch.any(unassigned_mask):
           num_unassigned = torch.sum(unassigned_mask).item()
-          print(f"[WARN] {num_unassigned} sentences were not assigned a label. Assigning them as distinct singletons.")
           graph_labels[unassigned_mask] = torch.arange(
                current_component_id,
                current_component_id + num_unassigned,
@@ -330,9 +325,12 @@ def compute_contractive_learning_loss(
      has_positive_groups = torch.any(counts >= min_cluster_size_for_positives)
 
      if not has_positive_groups and num_total_sentences > 1 :
-          print(f"[WARN] Contrastive Loss: No label groups large enough (>= {min_cluster_size_for_positives}) to form positive pairs. "
-               f"Total sentences: {num_total_sentences}, Unique labels: {len(unique_labels)}. Skipping loss.")
-          return torch.tensor(0.0, device=device, requires_grad=True)
+          print(f"[WARN] [Contrasive Learning] Contrastive Loss: No label groups large enough (>= {min_cluster_size_for_positives}) to form positive pairs. Skip.")
+          return None
+     
+     if len(unique_labels) == 1 and num_total_sentences > 1: ## only one big group for all sents
+          print(f"[WARN] [Contrasive Learning] All {num_total_sentences} sentences assigned the same label ({unique_labels[0]}). Skip.")
+          return None
      
      
      # --- 3. Initialize and Compute Loss using pytorch-metric-learning ---
@@ -342,13 +340,13 @@ def compute_contractive_learning_loss(
           normalized_embeddings = torch.nn.functional.normalize(projected_sentence_embeddings, p=2, dim=1)
           loss = loss_func(normalized_embeddings, graph_labels)
      except Exception as e:
-          print(f"[ERROR] when Contrastive loss computation: {e}")
+          print(f"[ERROR] [Contrasive Learning] when Contrastive loss computation: {e}")
           traceback.print_exc()
-          return torch.tensor(0.0, device=device, requires_grad=True)
+          return torch.tensor(0.0, device=device, requires_grad=False)
 
      if torch.isnan(loss) or torch.isinf(loss):
-          print(f"[WARN] Contrastive loss is NaN or Inf. Skip.")
-          return torch.tensor(0.0, device=device, requires_grad=True)
+          print(f"[WARN] [Contrasive Learning] Contrastive loss is NaN or Inf. Skip.")
+          return torch.tensor(0.0, device=device, requires_grad=False)
 
      return loss
 

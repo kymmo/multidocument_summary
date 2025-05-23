@@ -47,6 +47,7 @@ def train_gnn_t5(dataset_path, hidden_size, out_size, num_heads=8, learning_rate
           num_heads=num_heads,
           sentence_in_size = 768,
           word_in_size = 768,
+          projection_dim = 768,
           learning_rate=learning_rate,
           num_epochs=num_epochs,
           feat_drop=feat_drop,
@@ -78,7 +79,7 @@ def train_gnn_t5(dataset_path, hidden_size, out_size, num_heads=8, learning_rate
      
      print("*** Two-stage training finish! ***")
 
-def get_combined_embed2(batch_graph_list, gnn_embeddings, sent_text, CONTEXT_SENT_NUM = 3):
+def get_combined_embed2(batch_graph_list, gnn_embeddings, sent_text):
      concat_embedding_list = []
      start_ind = 0
      t5_model.eval()
@@ -88,28 +89,11 @@ def get_combined_embed2(batch_graph_list, gnn_embeddings, sent_text, CONTEXT_SEN
      ## cal sent level t5 emb
      graph_sent_embs = []
      for graph_sents in sent_text:
-          process_sents = []
-          for sent_id, sent in enumerate(graph_sents):
-               cont_start = max(sent_id - CONTEXT_SENT_NUM, 0)
-               context = " ".join(graph_sents[cont_start:sent_id])[:512]
-               cont_sent = f"[Context: {context}] {sent}"
-               process_sents.append(cont_sent)
-               
           with torch.no_grad(), torch.cuda.amp.autocast():
-               sent_embs = encoder.encode_batch(process_sents, batch_size=16)
+               sent_embs = encoder.encode_batch(graph_sents, batch_size=16)
           
           graph_sent_embs.append(sent_embs)
 
-     ## doc level t5 emb to provide doc infor
-     # process_doc = []
-     # for graph_sents in sent_text:
-     #      prompt = "Generate a summary from documents' embeddings: "
-     #      full_doc = prompt + " ".join(graph_sents)
-     #      process_doc.append(full_doc)
-          
-     # with torch.no_grad(), torch.cuda.amp.autocast():
-     #      docs_embs = encoder.encode_batch(process_doc, batch_size=16)
-     
      for i_th, graph in enumerate(batch_graph_list): # for each embs of graph
           graph_sent_num = graph['sentence'].x.shape[0]
           gnn_sent_embs = gnn_embeddings[start_ind: start_ind + graph_sent_num]
@@ -241,16 +225,11 @@ def fine_tune_t5(file_path, val_file_path, out_size, num_epochs = 20,
                     batched_graph = Batch.from_data_list(batch_graph).to(device, non_blocking=True)
                     
                     with torch.cuda.amp.autocast():
-                         sentence_feat = batched_graph['sentence'].x
-                         word_feat = batched_graph['word'].x
                          sent_text = batched_graph['sentence'].text
                          
-                         ## adding data noise
-                         corrupted_sentence_feat = F.dropout(sentence_feat, p=0.1, training=custom_t5_model.training)
-
                          # forward
-                         gnn_embeddings = gnn_model(batched_graph, corrupted_sentence_feat, word_feat)
-                         concat_embs_list = get_combined_embed2(batch_graph, gnn_embeddings, sent_text)
+                         sentence_embeddings, projected_sent_embeddings = gnn_model(batched_graph)
+                         concat_embs_list = get_combined_embed2(batch_graph, sentence_embeddings, sent_text)
                          
                          outputs = custom_t5_model(combin_embeddings_list = concat_embs_list, label_summaries=batch_summary)
                          loss = outputs.loss
@@ -286,11 +265,9 @@ def fine_tune_t5(file_path, val_file_path, out_size, num_epochs = 20,
                          
                          batched_graph = Batch.from_data_list(val_graph).to(device, non_blocking=True)
                          with torch.cuda.amp.autocast():
-                              sentence_feat = batched_graph['sentence'].x
-                              word_feat = batched_graph['word'].x
                               sent_text = batched_graph['sentence'].text
-                              gnn_embeddings = gnn_model(batched_graph, sentence_feat, word_feat)
-                              concat_embs_list = get_combined_embed2(val_graph, gnn_embeddings, sent_text)
+                              sentence_embeddings, projected_sent_embeddings = gnn_model(batched_graph)
+                              concat_embs_list = get_combined_embed2(val_graph, sentence_embeddings, sent_text)
                               
                               outputs = custom_t5_model(combin_embeddings_list=concat_embs_list, label_summaries=val_summary)
                               total_val_loss += outputs.loss.item()

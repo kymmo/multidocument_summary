@@ -18,13 +18,11 @@ t5_tokenizer = T5Tokenizer.from_pretrained(base_model)
 
 def eval_t5_summary(eval_data_path, max_summary_length, batch_size = 16, sent_similarity = 0.6):
      ## models load
-     # gnn_model = torch.load('gnn_trained_weights.pt')
      gnn_model = model_fm.load_gnn()
      gnn_model = gnn_model.to(device)
      gnn_model.eval()
      freeze_model(gnn_model)
      
-     # fine_tuned_t5 = CustomT5.from_pretrained("./fine_tuned_t5").to(device)
      fine_tuned_t5 = model_fm.load_t5()
      fine_tuned_t5 = fine_tuned_t5.to(device)
      fine_tuned_t5.eval()
@@ -47,12 +45,10 @@ def eval_t5_summary(eval_data_path, max_summary_length, batch_size = 16, sent_si
                
                with torch.cuda.amp.autocast():
                     batched_graph = Batch.from_data_list(batch_graph).to(device, non_blocking=True)
-                    sentence_feat = batched_graph['sentence'].x
-                    word_feat = batched_graph['word'].x
                     sent_text = batched_graph['sentence'].text
                     
-                    gnn_embeddings = gnn_model(batched_graph, sentence_feat, word_feat)
-                    concat_embs = get_combined_embed2(batch_graph, gnn_embeddings, sent_text)
+                    sentence_embeddings, projected_sent_embeddings = gnn_model(batched_graph)
+                    concat_embs = get_combined_embed2(batch_graph, sentence_embeddings, sent_text)
                     summaries = generate_t5_summary(fine_tuned_t5, concat_embs, max_summary_length)
                     
                     batch_scores.append(rouge_eval(batch_summary, summaries))

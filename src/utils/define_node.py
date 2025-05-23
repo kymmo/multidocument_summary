@@ -16,6 +16,7 @@ import faiss
 import traceback
 import numpy as np
 from tqdm import tqdm
+from sklearn.cluster import DBSCAN
 
 
 from utils.model_utils import clean_memory, print_cpu_memory, print_gpu_memory, auto_workers
@@ -160,9 +161,10 @@ def process_batch(batch_input):
                     if not isinstance(original_idx, int) or not isinstance(doc_idx, int) or not isinstance(doc_text, str):
                          print(f"[WARN] Skipping invalid item in list_of_docs at index {i}: {doc_tuple}")
                          continue
-                    all_doc_texts.append(doc_text)
+                    
+                    compressed_text = compact_text(doc_text, eps=0.7, min_samples=3, min_cluster_size_to_be_core=3, EMB_BATCH_SIZE=128)
+                    all_doc_texts.append(compressed_text)
                     doc_identifiers.append((original_idx, doc_idx))
-                    # Store the index 'i' within the current batch list for later retrieval
                     samples_in_batch[original_idx].append({'doc_idx_in_sample': doc_idx, 'batch_list_index': i})
                except (TypeError, ValueError) as e:
                     print(f"[WARN] Skipping invalid item format in list_of_docs at index {i}: {doc_tuple}, Error: {e}")
@@ -186,6 +188,7 @@ def process_batch(batch_input):
                sample_sent_nodeId_map_by_key = defaultdict(list)
                sample_sentId_nodeId_map = {}
                sample_token_node_map_by_doc = {}
+               sample_doc_id_list = []
                sample_edge_data = defaultdict(list)
 
                sample_all_sent_texts = []
@@ -206,9 +209,10 @@ def process_batch(batch_input):
                     doc_sents = list(doc.sents)
                     
                     doc_node = current_sample_node_offset
+                    sample_doc_id_list.append(doc_node)
                     current_sample_node_offset += 1
                     
-                    # --- Assign sentence node IDs (contiguous within sample) ---
+                    # --- Assign sentence node IDs (contiguous within doc) ---
                     doc_token_to_sample_node_list = [-1] * len(doc)
                     for sent_id_in_doc, sent_obj in enumerate(doc_sents):
                          current_sent_node_id_in_sample = current_sample_node_offset
@@ -223,11 +227,14 @@ def process_batch(batch_input):
                          sample_all_sent_texts.append(sent_text)
                          sample_sent_index_to_node_id.append(current_sent_node_id_in_sample)
                          
+                         # 1. Doc-Sent edge
+                         _add_edge_local(sample_edge_data, doc_node, current_sent_node_id_in_sample, "doc_sent", 1.0)
+                         
                          current_sample_node_offset += 1 # Increment offset for the next sentence in the sample
 
                     sample_token_node_map_by_doc[(original_training_idx, doc_idx_in_sample)] = doc_token_to_sample_node_list
 
-                    # 1. Coreference Edges
+                    # 2. Coreference Edges
                     if doc._.coref_chains:
                          doc_token_map = sample_token_node_map_by_doc.get((original_training_idx, doc_idx_in_sample), [])
                          if not doc_token_map:
@@ -258,7 +265,7 @@ def process_batch(batch_input):
                                    _add_edge_local(sample_edge_data, pronoun_node, antecedent_node, "pronoun_antecedent", 1.0)
 
                
-               # 2. Similarity Edges
+               # 3. Similarity Edges
                similarity_edges = compute_edges_similarity_ann(sample_all_sent_texts, edge_similarity_threshold)
                if similarity_edges is None or len(similarity_edges) == 0:
                     print(f"[WARN] No similarity edges found for document (orig={original_training_idx}, doc={doc_idx_in_sample}).")
@@ -280,7 +287,6 @@ def process_batch(batch_input):
                          for keyword, score in doc_kws_scores:
                               kws_scores_map[keyword].append(score)
 
-               # Assign node IDs
                kws_scores_node_map = {}
                phrase_matcher = PhraseMatcher(_subprocess_coref_nlp.vocab, attr='LOWER')
                
@@ -293,7 +299,7 @@ def process_batch(batch_input):
                     
                     current_sample_node_offset += 1
 
-               # 3. Word-Sentence Edges for the ENTIRE SAMPLE
+               # 4. Word-Sentence Edges for the ENTIRE SAMPLE
                for item_info in sample_items:
                     doc_idx_in_sample = item_info['doc_idx_in_sample']
                     batch_list_index = item_info['batch_list_index']
@@ -317,10 +323,12 @@ def process_batch(batch_input):
                     sample_word_nodeId_map,
                     sample_sent_nodeId_map_by_key,
                     sample_edge_data,
-                    sample_sentId_nodeId_map
+                    sample_sentId_nodeId_map,
+                    sample_doc_id_list
                ))
 
-               del sample_word_nodeId_map, sample_sent_nodeId_map_by_key, sample_edge_data, sample_sentId_nodeId_map, sample_token_node_map_by_doc
+               del sample_word_nodeId_map, sample_sent_nodeId_map_by_key, sample_edge_data
+               del sample_sentId_nodeId_map, sample_token_node_map_by_doc, sample_doc_id_list
                
      except Exception as e:
           pid = os.getpid()
@@ -350,6 +358,49 @@ def _add_edge_local(edge_data_dict, node1_idx, node2_idx, edge_type, weight=1.0)
 
      edge_data_dict[key].append({'type': edge_type, 'weight': weight})
 
+def compact_text(doc_text, eps=0.5, min_samples=2, min_cluster_size_to_be_core=3, EMB_BATCH_SIZE=128):
+     global _subprocess_coref_nlp, _subprocess_st_model
+     
+     doc = _subprocess_coref_nlp(doc_text)
+     original_sentence_texts = [s.text.strip() for s in doc.sents]
+     if not original_sentence_texts:
+          return []
+
+     with torch.inference_mode():
+          sentence_embeddings = _subprocess_st_model.encode(
+               original_sentence_texts,
+               convert_to_tensor=True,
+               device=device,
+               show_progress_bar=False,
+               batch_size=EMB_BATCH_SIZE
+          )
+               
+     dbscan = DBSCAN(eps=eps, min_samples=min_samples, metric='cosine') # Cosine distance is good for embeddings
+     cluster_labels = dbscan.fit_predict(sentence_embeddings)
+
+     num_sentences = len(original_sentence_texts)
+     indices_to_remove = set()
+     
+     # 1. Remove noise points (label -1)
+     for i, label in enumerate(cluster_labels):
+          if label == -1:
+               indices_to_remove.add(i)
+
+     # 2. Consider removing sentences from very small clusters
+     unique_cluster_ids, counts = np.unique(cluster_labels[cluster_labels != -1], return_counts=True)
+     for cluster_id, count in zip(unique_cluster_ids, counts):
+          if count < min_cluster_size_to_be_core:
+               for i, label in enumerate(cluster_labels):
+                    if label == cluster_id:
+                         indices_to_remove.add(i)
+
+     kept_sentences = []
+     for i in range(num_sentences):
+          if i not in indices_to_remove:
+               kept_sentences.append(original_sentence_texts[i])
+
+     return " ".join(kept_sentences)
+
 def count_words(text):
      """Counts words in a text after removing punctuation."""
      if not isinstance(text, str): # Handle potential non-string input
@@ -359,8 +410,8 @@ def count_words(text):
      words = text_without_punct.split()
      return len(words)
 
-def extract_keywords_internal(docs_text, words_per_100=1, min_keywords=2, max_keywords=15):
-     global _subprocess_keyword_model # Ensure access to the loaded model
+def extract_keywords_internal(docs_text, words_per_100=1, min_keywords=1, max_keywords=15):
+     global _subprocess_keyword_model
 
      if not docs_text or min_keywords <= 0 or max_keywords <= 0 or words_per_100 <= 0 or max_keywords <= min_keywords:
           return []
@@ -374,7 +425,6 @@ def extract_keywords_internal(docs_text, words_per_100=1, min_keywords=2, max_ke
      specific_top_n_list = []
      for text in docs_text:
           doc_word_count = count_words(text)
-          # Calculate desired N based on word count, clamped by min/max
           desired_n = max(min_keywords, min(max_keywords, (doc_word_count // 100) * words_per_100))
 
           specific_top_n_list.append(desired_n)
@@ -613,20 +663,22 @@ def define_node_edge_opt_parallel(documents_list, edge_similarity_threshold=0.6)
      sent_node_list = []
      edge_data_list = []
      sentId_nodeId_list = []
+     doc_node_list = []
      
      for sample_res in all_results_flat:
-          original_training_idx, sample_word_nodeId_map, sample_sent_nodeId_map_by_key, sample_edge_data, sample_sentId_nodeId_map = sample_res
+          original_training_idx, sample_word_nodeId_map, sample_sent_nodeId_map_by_key, sample_edge_data, sample_sentId_nodeId_map, sample_doc_id_list = sample_res
           
           # Append to global lists
           word_node_list.append(sample_word_nodeId_map)
           sent_node_list.append(sample_sent_nodeId_map_by_key)
           edge_data_list.append(sample_edge_data)
           sentId_nodeId_list.append(sample_sentId_nodeId_map)
+          doc_node_list.append(sample_doc_id_list)
 
      del all_results_flat, tasks, futures
      clean_memory()
 
-     return word_node_list, sent_node_list, edge_data_list, sentId_nodeId_list
+     return word_node_list, sent_node_list, edge_data_list, sentId_nodeId_list, doc_node_list
 
 def monitor_usage(interval, stop_event):
      """Monitors CPU and memory usage."""

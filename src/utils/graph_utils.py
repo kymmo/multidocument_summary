@@ -10,7 +10,7 @@ from utils.data_preprocess_utils import define_node_edge, load_jsonl
 from utils.define_node import define_node_edge_opt_parallel
 from utils.model_utils import clean_memory, print_gpu_memory
 from models.CheckPointManager import DataCheckpointManager
-from utils.graph_util_opt import create_embed_graphs_opt, get_embedded_pyg_graphs
+from utils.graph_util_opt import get_embedded_pyg_graphs
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
