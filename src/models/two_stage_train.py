@@ -262,8 +262,8 @@ def fine_tune_t5(file_path, val_file_path, out_size, num_epochs = 20,
                with torch.no_grad():
                     for val_batch in val_dataloader:
                          val_graph, val_map, val_summary = val_batch
-                         
                          batched_graph = Batch.from_data_list(val_graph).to(device, non_blocking=True)
+                         
                          with torch.cuda.amp.autocast():
                               sent_text = batched_graph['sentence'].text
                               sentence_embeddings, projected_sent_embeddings = gnn_model(batched_graph)
