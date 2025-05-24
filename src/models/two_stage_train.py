@@ -25,6 +25,8 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 t5_tokenizer = T5Tokenizer.from_pretrained(base_model)
 t5_model = T5ForConditionalGeneration.from_pretrained(base_model, use_cache=False).to(device)
 t5_model.gradient_checkpointing_enable()
+t5_model.eval()
+freeze_model(t5_model)
 
 def train_gnn_t5(dataset_path, hidden_size, out_size, num_heads=8, learning_rate=0.001, num_epochs=20, 
                feat_drop=0.1, attn_drop=0.1, batch_size=16, patience=5, sent_similarity_threshold=0.6, 
@@ -79,12 +81,9 @@ def train_gnn_t5(dataset_path, hidden_size, out_size, num_heads=8, learning_rate
      
      print("*** Two-stage training finish! ***")
 
-def get_combined_embed2(batch_graph_list, gnn_embeddings, sent_text):
+def get_combined_embed2(batch_graph_list, gnn_embeddings, sent_text, encoder):
      concat_embedding_list = []
      start_ind = 0
-     t5_model.eval()
-     freeze_model(t5_model)
-     encoder = LongTextEncoder(t5_tokenizer, t5_model)
      
      ## cal sent level t5 emb
      graph_sent_embs = []
@@ -209,6 +208,8 @@ def fine_tune_t5(file_path, val_file_path, out_size, num_epochs = 20,
           print(f"Resume training! From epoch {start_epoch}, batch {accumulated_batches}.")
      
      try:
+          long_text_encoder = LongTextEncoder(t5_tokenizer, t5_model)
+     
           for epoch in range(start_epoch, num_epochs):
                print(f"--- T5 Fine-tune ---")
                custom_t5_model.train()
@@ -229,7 +230,7 @@ def fine_tune_t5(file_path, val_file_path, out_size, num_epochs = 20,
                          
                          # forward
                          sentence_embeddings, projected_sent_embeddings = gnn_model(batched_graph)
-                         concat_embs_list = get_combined_embed2(batch_graph, sentence_embeddings, sent_text)
+                         concat_embs_list = get_combined_embed2(batch_graph, sentence_embeddings, sent_text, long_text_encoder)
                          
                          outputs = custom_t5_model(combin_embeddings_list = concat_embs_list, label_summaries=batch_summary)
                          loss = outputs.loss
@@ -247,7 +248,7 @@ def fine_tune_t5(file_path, val_file_path, out_size, num_epochs = 20,
                          scheduler.step()
                          optimizer.zero_grad()
                          
-                         if global_step % 100 == 0: # Log every 100 steps example
+                         if global_step % 25 == 0: # Log every 100 steps example
                               print(f"[T5 Scheduler] Optimize Step {global_step}, Current LR: {scheduler.get_last_lr()[0]:.8f}")
                          
                avg_train_loss = total_loss / processed_batches_this_epoch if processed_batches_this_epoch > 0 else 0
@@ -267,7 +268,7 @@ def fine_tune_t5(file_path, val_file_path, out_size, num_epochs = 20,
                          with torch.cuda.amp.autocast():
                               sent_text = batched_graph['sentence'].text
                               sentence_embeddings, projected_sent_embeddings = gnn_model(batched_graph)
-                              concat_embs_list = get_combined_embed2(val_graph, sentence_embeddings, sent_text)
+                              concat_embs_list = get_combined_embed2(val_graph, sentence_embeddings, sent_text, long_text_encoder)
                               
                               outputs = custom_t5_model(combin_embeddings_list=concat_embs_list, label_summaries=val_summary)
                               total_val_loss += outputs.loss.item()

@@ -2,7 +2,7 @@ import torch
 import time
 from torch_geometric.data import Batch
 from torch.utils.data import DataLoader as data_DataLoader
-from transformers import T5Tokenizer
+from transformers import T5Tokenizer, T5ForConditionalGeneration
 
 from utils.model_utils import clean_memory, freeze_model
 from models.CustomT5 import CustomT5, reshape_embedding_to_tensors
@@ -10,11 +10,14 @@ from models.DatasetLoader import EvalDataset, custom_collate_fn
 from models.CheckPointManager import DataType
 from models.ModelFileManager import model_fm
 from models.two_stage_train import get_combined_embed2
+from models.LongTextEncoder import LongTextEncoder
 from utils.model_utils import rouge_eval, merge_dicts
 
 base_model = "google-t5/t5-base"
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 t5_tokenizer = T5Tokenizer.from_pretrained(base_model)
+t5_model = T5ForConditionalGeneration.from_pretrained(base_model, use_cache=False).to(device)
+t5_model.gradient_checkpointing_enable()
 
 def eval_t5_summary(eval_data_path, max_summary_length, batch_size = 16, sent_similarity = 0.6):
      ## models load
@@ -36,6 +39,8 @@ def eval_t5_summary(eval_data_path, max_summary_length, batch_size = 16, sent_si
           collate_fn=custom_collate_fn
      )
      
+     long_text_encoder = LongTextEncoder(t5_tokenizer, t5_model)
+     
      print("Start evaluation...")
      eval_start_time = time.time()
      batch_scores = []
@@ -48,7 +53,7 @@ def eval_t5_summary(eval_data_path, max_summary_length, batch_size = 16, sent_si
                     sent_text = batched_graph['sentence'].text
                     
                     sentence_embeddings, projected_sent_embeddings = gnn_model(batched_graph)
-                    concat_embs = get_combined_embed2(batch_graph, sentence_embeddings, sent_text)
+                    concat_embs = get_combined_embed2(batch_graph, sentence_embeddings, sent_text, long_text_encoder)
                     summaries = generate_t5_summary(fine_tuned_t5, concat_embs, max_summary_length)
                     
                     batch_scores.append(rouge_eval(batch_summary, summaries))
@@ -74,7 +79,7 @@ def generate_t5_summary(fine_tuned_t5, combin_embeddings_list, max_summary_lengt
                "no_repeat_ngram_size": 4,
                "length_penalty": 1.0,
                "temperature": 0.9,
-               "do_sample": True,
+               "do_sample": False,
                "top_k": 50,
                "top_p": 0.95,
                "bos_token_id": t5_tokenizer.pad_token_id,

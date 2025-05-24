@@ -27,6 +27,6 @@ def model_train_eval(dataset_path, learning_rate = 0.001, num_epochs = 20, batch
      )
      
      eval_data_path = os.path.join(dataset_path, "test.jsonl")
-     scores = eval_t5_summary(eval_data_path, max_summary_length = 300, sent_similarity=sent_similarity_threshold)
+     scores = eval_t5_summary(eval_data_path, max_summary_length = 150, sent_similarity=sent_similarity_threshold)
 
      return scores
