@@ -274,7 +274,6 @@ def compute_contractive_learning_loss(
                continue # only consider sentence-to-sentence positive edges for these labels
           
           if edge_key_tuple not in graph.edge_index_dict or graph.edge_index_dict[edge_key_tuple].numel() == 0:
-               print(f"[WARN] [Contrasive Learning] Edge type {edge_key_tuple} is not in graph.")
                continue
 
           edge_index = graph.edge_index_dict[edge_key_tuple]
