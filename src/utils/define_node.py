@@ -374,9 +374,10 @@ def compact_text(doc_text, eps=0.5, min_samples=2, min_cluster_size_to_be_core=3
                show_progress_bar=False,
                batch_size=EMB_BATCH_SIZE
           )
-               
-     dbscan = DBSCAN(eps=eps, min_samples=min_samples, metric='cosine') # Cosine distance is good for embeddings
-     cluster_labels = dbscan.fit_predict(sentence_embeddings)
+     
+     sentence_embeddings_np = sentence_embeddings.cpu().numpy()
+     dbscan = DBSCAN(eps=eps, min_samples=min_samples, metric='cosine')
+     cluster_labels = dbscan.fit_predict(sentence_embeddings_np)
 
      num_sentences = len(original_sentence_texts)
      indices_to_remove = set()
