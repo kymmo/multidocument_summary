@@ -237,7 +237,7 @@ def fine_tune_t5(file_path, val_file_path, out_size, num_epochs = 20,
                          concat_embs_list = get_combined_embed2(batch_graph, sentence_embeddings, sent_text, long_text_encoder)
                          
                          ##############3test
-                         print(f"CustomT5 input_embeds shape: {concat_embs_list.shape}, label_summaries shape: {len(batch_summary)}")
+                         print(f"CustomT5 input_embeds shape: {len(concat_embs_list)},{concat_embs_list[0].shape}, label_summaries shape: {len(batch_summary)}")
                          ###########################
                          
                          outputs = custom_t5_model(combin_embeddings_list = concat_embs_list, label_summaries=batch_summary)
