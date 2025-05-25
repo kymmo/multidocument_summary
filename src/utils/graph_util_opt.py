@@ -336,6 +336,8 @@ def embed_nodes_with_rel_pos(graphs, word_emb_batch_size=64, sentence_emb_batch_
 
                          for idx, node_id in enumerate(word_node_ids):
                               final_word_embed_id_map[node_id] = final_word_embeddings[idx]
+                    
+                         del all_word_embeddings
                     else:
                          print(f"\nWarning: No word embeddings generated for graph {i} (List was empty).")
 
@@ -352,6 +354,8 @@ def embed_nodes_with_rel_pos(graphs, word_emb_batch_size=64, sentence_emb_batch_
                                    graph.nodes[node_id]['embedding'] = final_doc_embed_id_map[node_id]
 
                     embedded_graphs.append(graph)
+                    
+                    del final_word_embed_id_map, final_sentence_embed_id_map
 
           return embedded_graphs
      
@@ -359,7 +363,7 @@ def embed_nodes_with_rel_pos(graphs, word_emb_batch_size=64, sentence_emb_batch_
           print(f"[ERROR] An exception occurred while embedding graphs: {e}")
           traceback.print_exc()
           
-     del embedded_graphs, final_word_embed_id_map, final_sentence_embed_id_map, all_sent_embeddings
+     del embedded_graphs
      
      
 def embed_nodes_with_abs_pos(graphs, sentid_node_map_list, word_batch_size=64, sentence_batch_size=32):
