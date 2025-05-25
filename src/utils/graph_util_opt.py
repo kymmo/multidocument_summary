@@ -625,7 +625,6 @@ def get_embedded_pyg_graphs(dataset_type, docs_list, sent_similarity):
      
      try:
           mp.set_sharing_strategy('file_system')
-          print("Successfully set PyTorch multiprocessing sharing strategy to 'file_system'.")
      except RuntimeError:
           print("Could not set PyTorch multiprocessing sharing strategy.")
      

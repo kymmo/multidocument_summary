@@ -120,12 +120,14 @@ def fine_tune_t5(file_path, val_file_path, out_size, num_epochs = 20,
           train_dataset,
           batch_size=batch_size,
           shuffle=True,
+          num_workers=0,
           collate_fn=custom_collate_fn
      )
 
      val_dataset = EvalDataset(file_path=val_file_path, dataset_type=DataType.VALIDATION.value, sent_similarity=sent_similarity_threshold)
      val_dataloader = data_DataLoader(
           val_dataset, batch_size=batch_size, shuffle=False, # No shuffle
+          num_workers=0,
           collate_fn=custom_collate_fn
      )
      
@@ -237,7 +239,8 @@ def fine_tune_t5(file_path, val_file_path, out_size, num_epochs = 20,
                          concat_embs_list = get_combined_embed2(batch_graph, sentence_embeddings, sent_text, long_text_encoder)
                          
                          ##############3test
-                         print(f"CustomT5 input_embeds shape: {len(concat_embs_list)},{concat_embs_list[0].shape}, label_summaries shape: {len(batch_summary)}")
+                         if concat_embs_list[0].shape[0] > 512:
+                              print(f"CustomT5 input_embeds shape: {len(concat_embs_list)},{concat_embs_list[0].shape}, label_summaries shape: {len(batch_summary)}")
                          ###########################
                          
                          outputs = custom_t5_model(combin_embeddings_list = concat_embs_list, label_summaries=batch_summary)
