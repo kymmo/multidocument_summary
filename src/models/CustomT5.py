@@ -72,11 +72,13 @@ class CustomT5(T5ForConditionalGeneration):
           
      
 def reshape_embedding_to_tensors(combin_embeddings_list):
+     processed_embeddings_list = [emb.to(device) for emb in combin_embeddings_list]
+     
      reshape_list = [] ##[tensor(1, sequence_size, embed_size)]
      masks = [] ## (batch_size, sequence_size)
      
-     max_node_num = max(graph_embs.shape[0] for graph_embs in combin_embeddings_list) ## TODO: may be longer than 512
-     for graph_embs in combin_embeddings_list:
+     max_node_num = max(graph_embs.shape[0] for graph_embs in processed_embeddings_list) ## TODO: may be longer than 512
+     for graph_embs in processed_embeddings_list:
           cur_len = graph_embs.shape[0]
           padding_size = max_node_num - cur_len
           if padding_size > 0:

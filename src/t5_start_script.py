@@ -37,10 +37,20 @@ def run():
                          default=20,
                          help='Number of training epochs.')
 
-     parser.add_argument('--batch-size',
+     parser.add_argument('--gnn-batch-size',
                          type=int,
-                         default=8,
-                         help='Batch size for training and evaluation.')
+                         default=32,
+                         help='Batch size for GNN training and evaluation.')
+     
+     parser.add_argument('--llm-batch-size',
+                         type=int,
+                         default=4,
+                         help='Batch size for LLM finetuning and evaluation.')
+     
+     parser.add_argument('--llm-accumulate-step',
+                         type=int,
+                         default=4,
+                         help='For LLM gradient accumulation training.')
      
      parser.add_argument('--patience',
                          type=int,
@@ -94,8 +104,10 @@ def run():
      print(f"Dataset Path:                {args.dataset_path}")
      print(f"Base Learning Rate:          {args.learning_rate}")
      print(f"Num Epochs:                  {args.num_epochs}")
-     print(f"Batch Size:                  {args.batch_size}")
+     print(f"GNN Batch Size:              {args.gnn_batch_size}")
+     print(f"LLM Batch Size:              {args.llm_batch_size}")
      print(f"Early Stopping Patience:     {args.patience}")
+     print(f"Training Accumulation Step:   {args.llm_accumulate_step}")
      print(f"Sentence Sim Threshold:      {args.sent_similarity_threshold}")
      print(f"GNN Output Size:             {args.gnn_out_size}")
      print(f"GNN Num Heads:               {args.num_heads}")
@@ -110,7 +122,9 @@ def run():
                dataset_path=args.dataset_path,
                learning_rate=args.learning_rate,
                num_epochs=args.num_epochs,
-               batch_size=args.batch_size,
+               gnn_batch_size=args.gnn_batch_size, 
+               llm_batch_size=args.llm_batch_size,
+               llm_accumulate_step=args.llm_accumulate_step,
                patience=args.patience,
                gnn_out_size = args.gnn_out_size,
                num_heads = args.num_heads,

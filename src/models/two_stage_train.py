@@ -29,7 +29,8 @@ t5_model.eval()
 freeze_model(t5_model)
 
 def train_gnn_t5(dataset_path, hidden_size, out_size, num_heads=8, learning_rate=0.001, num_epochs=20, 
-               feat_drop=0.1, attn_drop=0.1, batch_size=16, patience=5, sent_similarity_threshold=0.6, 
+               feat_drop=0.1, attn_drop=0.1, gnn_batch_size=16, llm_batch_size=4, 
+               patience=5, llm_accumulate_step=4, sent_similarity_threshold=0.6, 
                learning_rates_dict = None, warmup_ratio=0.1):
      ## gnn training, t5 freezed
      train_data_path = os.path.join(dataset_path, "train.jsonl")
@@ -37,7 +38,6 @@ def train_gnn_t5(dataset_path, hidden_size, out_size, num_heads=8, learning_rate
      ## path check
      if not Path(train_data_path).exists() or not Path(val_data_path).exists():
           raise FileNotFoundError(f"File path {train_data_path} or {val_data_path} is not exist!")
-     print(f"Accessing training data path: {train_data_path} and validation data path: {val_data_path}")
      
      gnn_start_time = time.time()
      #### train gnn, freeze t5
@@ -54,7 +54,7 @@ def train_gnn_t5(dataset_path, hidden_size, out_size, num_heads=8, learning_rate
           num_epochs=num_epochs,
           feat_drop=feat_drop,
           attn_drop=attn_drop,
-          batch_size=batch_size,
+          batch_size=gnn_batch_size,
           save_method='entire_model',
           patience=patience,
           sent_similarity_threshold=sent_similarity_threshold,
@@ -70,7 +70,8 @@ def train_gnn_t5(dataset_path, hidden_size, out_size, num_heads=8, learning_rate
           val_file_path=val_data_path,
           out_size=out_size,
           num_epochs=num_epochs,
-          batch_size=batch_size,
+          batch_size=llm_batch_size,
+          accumulate_step=llm_accumulate_step,
           patience=patience,
           sent_similarity_threshold=sent_similarity_threshold,
           learning_rates_dict=learning_rates_dict,
@@ -144,6 +145,8 @@ def fine_tune_t5(file_path, val_file_path, out_size, num_epochs = 20,
      
      config = T5Config.from_pretrained(base_model)
      config.projector_input_size = out_size + t5_model.config.hidden_size # concated emb size
+     config.torch_dtype = torch.float16
+     config.gradient_checkpointing = True
      custom_t5_model = CustomT5(config).to(device)
      if learning_rates_dict is None or learning_rates_dict["encoder_last2"] is None or learning_rates_dict["decoder_last2"] is None \
           or learning_rates_dict["projector"] is None:
@@ -228,9 +231,14 @@ def fine_tune_t5(file_path, val_file_path, out_size, num_epochs = 20,
                     with torch.cuda.amp.autocast():
                          sent_text = batched_graph['sentence'].text
                          
-                         # forward
-                         sentence_embeddings, projected_sent_embeddings = gnn_model(batched_graph)
+                         with torch.no_grad():
+                              sentence_embeddings, projected_sent_embeddings = gnn_model(batched_graph)
+                         sentence_embeddings = sentence_embeddings.detach()
                          concat_embs_list = get_combined_embed2(batch_graph, sentence_embeddings, sent_text, long_text_encoder)
+                         
+                         ##############3test
+                         print(f"CustomT5 input_embeds shape: {concat_embs_list.shape}, label_summaries shape: {len(batch_summary)}")
+                         ###########################
                          
                          outputs = custom_t5_model(combin_embeddings_list = concat_embs_list, label_summaries=batch_summary)
                          loss = outputs.loss
@@ -260,7 +268,7 @@ def fine_tune_t5(file_path, val_file_path, out_size, num_epochs = 20,
                custom_t5_model.eval()
                total_val_loss = 0.0
                num_val_batches = 0
-               with torch.no_grad():
+               with torch.no_grad(), torch.cuda.amp.autocast():
                     for val_batch in val_dataloader:
                          val_graph, val_map, val_summary = val_batch
                          batched_graph = Batch.from_data_list(val_graph).to(device, non_blocking=True)
@@ -289,7 +297,7 @@ def fine_tune_t5(file_path, val_file_path, out_size, num_epochs = 20,
                     optimizers=optimizers_to_save,
                     schedulers=schedulers_to_save,
                     scaler=scaler,
-                    accumulated_batches= len(train_dataloader),
+                    accumulated_batches= 0,
                     global_step=global_step,
                     early_stopper_state=early_stopper.get_state(),
                     train_losses=train_losses,
