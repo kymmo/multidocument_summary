@@ -17,16 +17,15 @@ class EvalDataset(Dataset):
           embedded_graphs, node_maps, summary_list = \
           get_embed_graph_node_map(file_path=file_path, dataset_type=self.dataset_type, sent_similarity=self.sent_similarity) ## node_maps: sent_node_id-> sent_text
           
-          #####################test
-          print(f"len: {len(self.data)}, {len(self.node_map)}, {len(self.summary_list)}")
-          ######################3
-          
           return embedded_graphs, node_maps, summary_list
 
      def __len__(self):
           return len(self.data)
 
      def __getitem__(self, idx):
+          #####################test
+          print(f"id: {idx}, len: {len(self.data)}, {len(self.node_map)}, {len(self.summary_list)}")
+          ######################3
           return self.data[idx], self.node_map[idx], self.summary_list[idx]
 
 class OptimizedDataset(Dataset):
