@@ -60,7 +60,7 @@ def train_gnn_t5(dataset_path, hidden_size, out_size, num_heads=8, learning_rate
           sent_similarity_threshold=sent_similarity_threshold,
      )
      gnn_end_time = time.time()
-     print(f"Finish gnn training, time cost:  {gnn_end_time - gnn_start_time:.4f} s.")
+     print(f"** Finish gnn training, time cost:  {gnn_end_time - gnn_start_time:.4f} s.")
      
      #### train t5, freeze gnn
      print("Start fine-tuning T5...")
@@ -78,7 +78,7 @@ def train_gnn_t5(dataset_path, hidden_size, out_size, num_heads=8, learning_rate
           warmup_ratio=warmup_ratio,
      )
      t5_end_time = time.time()
-     print(f"Finish T5 fine-tune, time cost:  {t5_end_time - t5_start_time:.4f} s.")
+     print(f"** Finish T5 fine-tune, time cost:  {t5_end_time - t5_start_time:.4f} s.")
      
      print("*** Two-stage training finish! ***")
 

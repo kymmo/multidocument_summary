@@ -595,8 +595,6 @@ def define_node_edge_opt_parallel(documents_list, edge_similarity_threshold=0.6)
                     Aggregated results across all documents. Node IDs need careful handling.
                     Returning structure might need adjustment based on downstream use.
      """
-     print(f"[Graph Node-Edge Define] Processing {len(documents_list)} samples...")
-     
      # --- Prepare tasks for parallel execution ---
      # Each task will be a batch of documents to process.
      tasks = []
@@ -613,16 +611,12 @@ def define_node_edge_opt_parallel(documents_list, edge_similarity_threshold=0.6)
                tasks.append(batch)
 
      cpu_num = auto_workers()
-     print(f"Using {cpu_num} worker processes for parallel processing.")
-
      all_results_flat = [] # Store results from all workers
 
      # Start memory monitor
      stop_event = threading.Event()
      monitor_thread = threading.Thread(target=monitor_usage, args=(3, stop_event))
      monitor_thread.start()
-
-     start_processing_time = time.time()
 
      with concurrent.futures.ProcessPoolExecutor(
           max_workers=cpu_num,
@@ -648,9 +642,6 @@ def define_node_edge_opt_parallel(documents_list, edge_similarity_threshold=0.6)
                except Exception as e:
                     print(f"[ERROR] Fetching result from future failed: {e}")
                     traceback.print_exc()
-
-     processing_time = time.time() - start_processing_time
-     print(f"Parallel preprocessing took {processing_time:.4f} s.")
 
      # Stop monitoring
      stop_event.set()

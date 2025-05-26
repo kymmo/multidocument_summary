@@ -16,11 +16,11 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 def get_embed_graph(file_path,dataset_type, sent_similarity=0.6):
      docs_list, summary_list = load_jsonl(file_path)
-     print("[Preprocess] Data file is loaded. Creating embedding graph...")
+     print("[Preprocess] Creating embedding graph...")
      start = time.time()
      sample_graphs, node_maps = get_embedded_pyg_graphs(docs_list=docs_list, dataset_type=dataset_type, sent_similarity=sent_similarity)
      end = time.time()
-     print(f"[Preprocess] Finish graph creation and embedding, time cost:  {end - start:.4f} s.")
+     print(f"[Preprocess] Embedding graph creation time cost:  {end - start:.4f} s.")
      
      clean_memory()
      print_gpu_memory("after graph embedding")
@@ -28,11 +28,11 @@ def get_embed_graph(file_path,dataset_type, sent_similarity=0.6):
 
 def get_embed_graph_node_map(file_path,dataset_type, sent_similarity=0.6):
      docs_list, summary_list = load_jsonl(file_path)
-     print(f"[Preprocess] Creating embedding graph and node mapping...")
+     print("[Preprocess] Creating embedding graph...")
      start = time.time()
      sample_graphs, node_maps = get_embedded_pyg_graphs(docs_list=docs_list, dataset_type=dataset_type, sent_similarity=sent_similarity)
      end = time.time()
-     print(f"[Preprocess] Finish graph creation and embedding, time cost:  {end - start:.4f} s.")
+     print(f"[Preprocess] Embedding graph creation time cost:  {end - start:.4f} s.")
      
      clean_memory()
      print_gpu_memory("after graph embedding")

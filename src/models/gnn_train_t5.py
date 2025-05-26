@@ -20,7 +20,6 @@ def train_gnn(file_path, hidden_size, out_size, num_heads, val_file_path, senten
                device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')):
 
      clean_memory()
-     print(f"GNN training task runing on {device}")
 
      train_dataset = OptimizedDataset(file_path=file_path, dataset_type=DataType.TRAIN.value, sent_similarity=sent_similarity_threshold)
      train_dataloader = geo_DataLoader(

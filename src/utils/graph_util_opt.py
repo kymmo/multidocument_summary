@@ -268,6 +268,8 @@ def embed_nodes_with_rel_pos(graphs, word_emb_batch_size=64, sentence_emb_batch_
 
                          if all_sent_embeddings:
                               final_main_sent_embeddings = torch.cat(all_sent_embeddings, dim=0)
+                         else:
+                              print("[Warning] Sentence embedding EMPTY!")
                          
                          # Map embeddings directly to node IDs
                          for idx, node_id in enumerate(sentence_node_ids):
@@ -291,6 +293,10 @@ def embed_nodes_with_rel_pos(graphs, word_emb_batch_size=64, sentence_emb_batch_
                               else:
                                    end_point = start_point + (len(sentence_node_ids) - num_sent_previous - 1)
 
+                              if end_point < start_point:
+                                   print(f"[Warning] {doc_id}-th doc embedding has invalid sentence node id range.")
+                                   continue
+                              
                               doc_id_sent_id_map[doc_id] = (start_point, end_point)
                          
                          ## average sent_emb to get doc_emb
@@ -302,7 +308,8 @@ def embed_nodes_with_rel_pos(graphs, word_emb_batch_size=64, sentence_emb_batch_
                               if temp_sent_embs:
                                    doc_embedding = torch.mean(torch.stack(temp_sent_embs, dim=0), dim=0)
                               else:
-                                   doc_embedding = torch.zeros_like(final_sentence_embed_id_map[0])
+                                   sent_node, sent_emb = next(iter(final_sentence_embed_id_map.items()))
+                                   doc_embedding = torch.zeros_like(sent_emb)
 
                               final_doc_embed_id_map[doc_id] = doc_embedding
                     else:
@@ -356,14 +363,13 @@ def embed_nodes_with_rel_pos(graphs, word_emb_batch_size=64, sentence_emb_batch_
                     embedded_graphs.append(graph)
                     
                     del final_word_embed_id_map, final_sentence_embed_id_map
-
-          return embedded_graphs
      
      except Exception as e:
           print(f"[ERROR] An exception occurred while embedding graphs: {e}")
           traceback.print_exc()
-          
-     del embedded_graphs
+     
+     finally:
+          return embedded_graphs
      
      
 def embed_nodes_with_abs_pos(graphs, sentid_node_map_list, word_batch_size=64, sentence_batch_size=32):
@@ -626,6 +632,9 @@ def parallel_convert_graph_serializable(nx_graph):
 def get_embedded_pyg_graphs(dataset_type, docs_list, sent_similarity):
      data_cpt = DataCheckpointManager()
      num_workers = auto_workers()
+     TASK_PREFIX = '[Create Graph]'
+     
+     print(f"Using {num_workers} workers to process {len(docs_list)} samples.")
      
      try:
           mp.set_sharing_strategy('file_system')
@@ -633,9 +642,9 @@ def get_embedded_pyg_graphs(dataset_type, docs_list, sent_similarity):
           print("Could not set PyTorch multiprocessing sharing strategy.")
      
      if (latest_step := data_cpt.get_latest_step(dataset_type = dataset_type)):
-          print(f"Resume from step: [{latest_step}] for {dataset_type} dataset")
+          print(f"{TASK_PREFIX} Resume from step: [{latest_step}] for {dataset_type} dataset")
      else:
-          print(f"Starting from scratch for {dataset_type} dataset.")
+          print(f"{TASK_PREFIX} Starting from scratch for {dataset_type} dataset.")
 
      define_node_key = data_cpt.StepKey.PREDEFINE.value
      graph_create_key = data_cpt.StepKey.GRAPH.value
@@ -647,7 +656,7 @@ def get_embedded_pyg_graphs(dataset_type, docs_list, sent_similarity):
 
      if not latest_step or latest_step in [define_node_key]:
           if not latest_step:
-               print(f"Step 1: Defining nodes and edges for {dataset_type} dataset...")
+               print(f"{TASK_PREFIX} Step 1: Defining nodes and edges for {dataset_type} dataset...")
                start_time = time.time()
 
                word_nodeId_list, sent_nodeId_list, edge_data_list, sentid_node_map_list, doc_node_list = define_node_edge_opt_parallel(docs_list, sent_similarity)
@@ -659,7 +668,7 @@ def get_embedded_pyg_graphs(dataset_type, docs_list, sent_similarity):
                     'sentid_node_map_list': sentid_node_map_list,
                     'doc_node_list': doc_node_list
                }, dataset_type=dataset_type)
-               print(f"Step 1 finished in {time.time() - start_time:.2f}s for {dataset_type} dataset")
+               print(f"{TASK_PREFIX} Step 1 finished in {time.time() - start_time:.4f}s.")
           else:
                data = data_cpt.load_step(step_name=define_node_key, dataset_type=dataset_type)
                if data:
@@ -673,7 +682,7 @@ def get_embedded_pyg_graphs(dataset_type, docs_list, sent_similarity):
      graph_list = None
      if not latest_step or latest_step in [define_node_key, graph_create_key]:
           if not latest_step or latest_step != graph_create_key:  # Run if starting or finished step 1
-               print(f"Step 2: Creating NetworkX graphs in parallel for {dataset_type} dataset...")
+               print(f"{TASK_PREFIX} Step 2: Creating NetworkX graphs in parallel for {dataset_type} dataset...")
                start_time = time.time()
                num_items = len(word_nodeId_list)
                pool_args = list(zip(word_nodeId_list, sent_nodeId_list, edge_data_list, doc_node_list))
@@ -685,12 +694,11 @@ def get_embedded_pyg_graphs(dataset_type, docs_list, sent_similarity):
                               graph_list.append(nx_graph)
 
                data_cpt.save_step(step_name=graph_create_key, data={'graph_list': graph_list}, dataset_type=dataset_type)
-               print(f"Step 2 finished in {time.time() - start_time:.2f}s for {dataset_type} dataset")
+               print(f"{TASK_PREFIX} Step 2 finished in {time.time() - start_time:.4f}s.")
           else:
                data = data_cpt.load_step(step_name=graph_create_key,dataset_type=dataset_type)
                if data:
                     graph_list = data['graph_list']
-                    print(f"Loading associated data from Step 1 checkpoint for {dataset_type} dataset...")
                     define_data = data_cpt.load_step(step_name=define_node_key, dataset_type=dataset_type)
                     if define_data:
                          sentid_node_map_list = define_data['sentid_node_map_list']
@@ -699,12 +707,11 @@ def get_embedded_pyg_graphs(dataset_type, docs_list, sent_similarity):
      embedded_graph_list = None
      if not latest_step or latest_step in [define_node_key, graph_create_key, embed_graph_key]:
           if not latest_step or latest_step != embed_graph_key:  # Run if starting or finished step 1 or 2
-               print(f"Step 3: Embedding graph nodes for {dataset_type} dataset...")
+               print(f"{TASK_PREFIX} Step 3: Embedding graph nodes for {dataset_type} dataset...")
                start_time = time.time()
                embedded_graphs_gpu = embed_nodes_with_rel_pos(graph_list)
 
                ## transfers to cpu
-               print(f"Moving embeddings to CPU for checkpointing/conversion for {dataset_type} dataset...")
                embedded_graph_list = []
                for g in embedded_graphs_gpu:
                     for node, data in g.nodes(data=True):
@@ -715,7 +722,7 @@ def get_embedded_pyg_graphs(dataset_type, docs_list, sent_similarity):
                del embedded_graphs_gpu
 
                data_cpt.save_step(step_name=embed_graph_key, data={'embedded_graph_list': embedded_graph_list}, dataset_type=dataset_type)
-               print(f"Step 3 finished in {time.time() - start_time:.2f}s for {dataset_type} dataset")
+               print(f"{TASK_PREFIX} Step 3 finished in {time.time() - start_time:.4f}s.")
           else:
                data = data_cpt.load_step(step_name=embed_graph_key, dataset_type=dataset_type)
                if data:
@@ -730,7 +737,7 @@ def get_embedded_pyg_graphs(dataset_type, docs_list, sent_similarity):
      pyg_graph_list_cpu = None
      if not latest_step or latest_step in [define_node_key, graph_create_key, embed_graph_key, final_graph_key]:
           if not latest_step or latest_step != final_graph_key:
-               print("Step 4: Converting graphs to PyG format in parallel...")
+               print(f"{TASK_PREFIX} Step 4: Converting graphs to PyG format for {dataset_type} dataset...")
                start_time = time.time()
                pyg_graph_list_cpu = []
                node_sent_map_list = []
@@ -748,7 +755,7 @@ def get_embedded_pyg_graphs(dataset_type, docs_list, sent_similarity):
                     
                          for res_idx, res in enumerate(pool.imap(parallel_convert_graph_serializable, embedded_graph_list)):
                               if isinstance(res, Exception):
-                                   print(f"[Error] while converting {res_idx}-th graph.")
+                                   print(f"[Error] {TASK_PREFIX} Fail to convert {res_idx}-th graph.")
                                    pyg_graph_list_cpu.append(None)
                                    node_sent_map_list.append(None)
                               else:
@@ -782,7 +789,7 @@ def get_embedded_pyg_graphs(dataset_type, docs_list, sent_similarity):
                     'pyg_graph_list': pyg_graph_list_cpu,
                     'node_sent_map_list': node_sent_map_list},
                     dataset_type=dataset_type)
-               print(f"Step 4 finished in {time.time() - start_time:.2f}s")
+               print(f"{TASK_PREFIX} Step 4 finished in {time.time() - start_time:.4f}s.")
           else:
                data = data_cpt.load_step(step_name=final_graph_key, dataset_type=dataset_type)
                pyg_graph_list_cpu = data['pyg_graph_list']
