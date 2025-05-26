@@ -188,7 +188,7 @@ def process_batch(batch_input):
                sample_sent_nodeId_map_by_key = defaultdict(list)
                sample_sentId_nodeId_map = {}
                sample_token_node_map_by_doc = {}
-               sample_doc_id_list = []
+               sample_doc_sents_map = defaultdict(list)
                sample_edge_data = defaultdict(list)
 
                sample_all_sent_texts = []
@@ -209,7 +209,6 @@ def process_batch(batch_input):
                     doc_sents = list(doc.sents)
                     
                     doc_node = current_sample_node_offset
-                    sample_doc_id_list.append(doc_node)
                     current_sample_node_offset += 1
                     
                     # --- Assign sentence node IDs (contiguous within doc) ---
@@ -229,6 +228,7 @@ def process_batch(batch_input):
                          
                          # 1. Doc-Sent edge
                          _add_edge_local(sample_edge_data, doc_node, current_sent_node_id_in_sample, "doc_sent", 1.0)
+                         sample_doc_sents_map[doc_node].append(current_sent_node_id_in_sample)
                          
                          current_sample_node_offset += 1 # Increment offset for the next sentence in the sample
 
@@ -323,11 +323,11 @@ def process_batch(batch_input):
                     sample_sent_nodeId_map_by_key,
                     sample_edge_data,
                     sample_sentId_nodeId_map,
-                    sample_doc_id_list
+                    sample_doc_sents_map,
                ))
 
                del sample_word_nodeId_map, sample_sent_nodeId_map_by_key, sample_edge_data
-               del sample_sentId_nodeId_map, sample_token_node_map_by_doc, sample_doc_id_list
+               del sample_sentId_nodeId_map, sample_token_node_map_by_doc, sample_doc_sents_map,
                
      except Exception as e:
           pid = os.getpid()
@@ -654,22 +654,22 @@ def define_node_edge_opt_parallel(documents_list, edge_similarity_threshold=0.6)
      sent_node_list = []
      edge_data_list = []
      sentId_nodeId_list = []
-     doc_node_list = []
+     doc_sents_list = []
      
      for sample_res in all_results_flat:
-          original_training_idx, sample_word_nodeId_map, sample_sent_nodeId_map_by_key, sample_edge_data, sample_sentId_nodeId_map, sample_doc_id_list = sample_res
+          original_training_idx, sample_word_nodeId_map, sample_sent_nodeId_map_by_key, sample_edge_data, sample_sentId_nodeId_map, sample_doc_sents_map = sample_res
           
           # Append to global lists
           word_node_list.append(sample_word_nodeId_map)
           sent_node_list.append(sample_sent_nodeId_map_by_key)
           edge_data_list.append(sample_edge_data)
           sentId_nodeId_list.append(sample_sentId_nodeId_map)
-          doc_node_list.append(sample_doc_id_list)
+          doc_sents_list.append(sample_doc_sents_map)
 
      del all_results_flat, tasks, futures
      clean_memory()
 
-     return word_node_list, sent_node_list, edge_data_list, sentId_nodeId_list, doc_node_list
+     return word_node_list, sent_node_list, edge_data_list, sentId_nodeId_list, doc_sents_list
 
 def monitor_usage(interval, stop_event):
      """Monitors CPU and memory usage."""

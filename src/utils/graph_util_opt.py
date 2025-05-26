@@ -159,7 +159,7 @@ def parallel_create_graph(args):
      Ensures graph attributes are picklable.
      """
      try:
-          word_node_map, sent_node_map, edges_data, doc_node_list = args
+          word_node_map, sent_node_map, edges_data, doc_sents_map = args
           graph = nx.MultiDiGraph()
 
           # Add word nodes
@@ -174,7 +174,7 @@ def parallel_create_graph(args):
           graph.add_nodes_from(sent_nodes)
 
           # Add document nodes
-          doc_nodes = [(doc_node_id, {"type": "document"}) for doc_node_id in doc_node_list]
+          doc_nodes = [(doc, {"type": "document", "sents": sents}) for doc, sents in doc_sents_map.items()]
           graph.add_nodes_from(doc_nodes)
           
           # Add edges
@@ -225,6 +225,7 @@ def embed_nodes_with_rel_pos(graphs, word_emb_batch_size=64, sentence_emb_batch_
                     word_texts = []
                     word_node_ids = []
                     doc_node_ids = []
+                    doc_sents_ids = []
 
                     for node, data in graph.nodes(data=True):
                          node_type = data.get('type')
@@ -238,6 +239,7 @@ def embed_nodes_with_rel_pos(graphs, word_emb_batch_size=64, sentence_emb_batch_
                               word_node_ids.append(node)
                          elif node_type == 'document':
                               doc_node_ids.append(node)
+                              doc_sents_ids.append(data.get('sents'))
                          
                     
                     # --- Sentence Embedding ---
@@ -281,29 +283,11 @@ def embed_nodes_with_rel_pos(graphs, word_emb_batch_size=64, sentence_emb_batch_
                     # --- Doc Embedding --
                     final_doc_embed_id_map = {}
                     if sentence_node_ids:
-                         doc_node_ids.sort()
-                         num_sent_previous = 0
-                         doc_id_sent_id_map = {} # get doc-sent node ids
-                         for idx, doc_id in enumerate(doc_node_ids):
-                              start_point = doc_id + 1
-                              end_point = None
-                              if idx + 1 < len(doc_node_ids):
-                                   end_point = doc_node_ids[idx + 1] - 1
-                                   num_sent_previous += end_point - start_point + 1
-                              else:
-                                   end_point = start_point + (len(sentence_node_ids) - num_sent_previous - 1)
-
-                              if end_point < start_point:
-                                   print(f"[Warning] {doc_id}-th doc embedding has invalid sentence node id range.")
-                                   continue
-                              
-                              doc_id_sent_id_map[doc_id] = (start_point, end_point)
-                         
                          ## average sent_emb to get doc_emb
-                         for doc_id, (start_sent_id, end_sent_id) in doc_id_sent_id_map.items():
+                         for idx, doc_id in enumerate(doc_node_ids):
                               temp_sent_embs = []
-                              for k in range(start_sent_id, end_sent_id + 1):
-                                   temp_sent_embs.append(final_sentence_embed_id_map[k])
+                              for sent_id in doc_sents_ids[idx]:
+                                   temp_sent_embs.append(final_sentence_embed_id_map[sent_id])
                               
                               if temp_sent_embs:
                                    doc_embedding = torch.mean(torch.stack(temp_sent_embs, dim=0), dim=0)
@@ -659,14 +643,14 @@ def get_embedded_pyg_graphs(dataset_type, docs_list, sent_similarity):
                print(f"{TASK_PREFIX} Step 1: Defining nodes and edges for {dataset_type} dataset...")
                start_time = time.time()
 
-               word_nodeId_list, sent_nodeId_list, edge_data_list, sentid_node_map_list, doc_node_list = define_node_edge_opt_parallel(docs_list, sent_similarity)
+               word_nodeId_list, sent_nodeId_list, edge_data_list, sentid_node_map_list, doc_sents_map_list = define_node_edge_opt_parallel(docs_list, sent_similarity)
 
                data_cpt.save_step(step_name=define_node_key, data={
                     'word_nodeId_list': word_nodeId_list,
                     'sent_nodeId_list': sent_nodeId_list,
                     'edge_data_list': edge_data_list,
                     'sentid_node_map_list': sentid_node_map_list,
-                    'doc_node_list': doc_node_list
+                    'doc_sents_map_list': doc_sents_map_list
                }, dataset_type=dataset_type)
                print(f"{TASK_PREFIX} Step 1 finished in {time.time() - start_time:.4f}s.")
           else:
@@ -676,7 +660,7 @@ def get_embedded_pyg_graphs(dataset_type, docs_list, sent_similarity):
                     sent_nodeId_list = data['sent_nodeId_list']
                     edge_data_list = data['edge_data_list']
                     sentid_node_map_list = data['sentid_node_map_list']
-                    doc_node_list = data['doc_node_list']
+                    doc_sents_map_list = data['doc_sents_map_list']
 
      # --- Step 2: Create NetworkX Graphs (Parallel) ---
      graph_list = None
@@ -685,7 +669,7 @@ def get_embedded_pyg_graphs(dataset_type, docs_list, sent_similarity):
                print(f"{TASK_PREFIX} Step 2: Creating NetworkX graphs in parallel for {dataset_type} dataset...")
                start_time = time.time()
                num_items = len(word_nodeId_list)
-               pool_args = list(zip(word_nodeId_list, sent_nodeId_list, edge_data_list, doc_node_list))
+               pool_args = list(zip(word_nodeId_list, sent_nodeId_list, edge_data_list, doc_sents_map_list))
 
                graph_list = []
                if num_items > 0:
