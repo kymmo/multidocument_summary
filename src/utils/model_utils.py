@@ -85,7 +85,7 @@ def auto_workers():
           cpu_limit_workers = max(1, cpu_cnt - 2)
 
           workers = min(cpu_limit_workers, mem_limit_workers)
-          return max(workers, 2)
+          return max(workers, 3)
      except Exception as e:
           print(f"[WARN] Failed to determine optimal workers automatically: {e}. Falling back to 2.")
           return 2 # Fallback value
