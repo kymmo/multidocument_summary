@@ -627,8 +627,6 @@ def get_embedded_pyg_graphs(dataset_type, docs_list, sent_similarity):
      
      if (latest_step := data_cpt.get_latest_step(dataset_type = dataset_type)):
           print(f"{TASK_PREFIX} Resume from step: [{latest_step}] for {dataset_type} dataset")
-     else:
-          print(f"{TASK_PREFIX} Starting from scratch for {dataset_type} dataset.")
 
      define_node_key = data_cpt.StepKey.PREDEFINE.value
      graph_create_key = data_cpt.StepKey.GRAPH.value

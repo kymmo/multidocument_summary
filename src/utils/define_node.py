@@ -1,4 +1,3 @@
-import time
 import os
 import concurrent.futures
 import multiprocessing
@@ -159,10 +158,10 @@ def process_batch(batch_input):
                try:
                     original_idx, doc_idx, doc_text = doc_tuple
                     if not isinstance(original_idx, int) or not isinstance(doc_idx, int) or not isinstance(doc_text, str):
-                         print(f"[WARN] Skipping invalid item in list_of_docs at index {i}: {doc_tuple}")
+                         print(f"[WARN] Skipping invalid item in list_of_docs at index {i}: {doc_tuple}") ##TODO: print is not woring
                          continue
                     
-                    compressed_text = compact_text(doc_text, eps=0.7, min_samples=3, min_cluster_size_to_be_core=3, EMB_BATCH_SIZE=128)
+                    compressed_text = compact_text(doc_text, eps=0.75, min_samples=3, min_cluster_size_to_be_core=2, EMB_BATCH_SIZE=128)
                     all_doc_texts.append(compressed_text)
                     doc_identifiers.append((original_idx, doc_idx))
                     samples_in_batch[original_idx].append({'doc_idx_in_sample': doc_idx, 'batch_list_index': i})
@@ -201,10 +200,6 @@ def process_batch(batch_input):
                     doc_idx_in_sample = item_info['doc_idx_in_sample']
                     batch_list_index = item_info['batch_list_index'] # Index in the original all_doc_texts list
 
-                    # Get the corresponding processed doc and keywords
-                    if batch_list_index >= len(processed_docs_ordered) or batch_list_index >= len(docs_kws_scores_ordered):
-                         print(f"[WARN] Index mismatch retrieving processed data for doc (orig={original_training_idx}, doc={doc_idx_in_sample}) at batch index {batch_list_index}. Skipping doc.")
-                         continue
                     doc = processed_docs_ordered[batch_list_index]
                     doc_sents = list(doc.sents)
                     
@@ -238,7 +233,7 @@ def process_batch(batch_input):
                     if doc._.coref_chains:
                          doc_token_map = sample_token_node_map_by_doc.get((original_training_idx, doc_idx_in_sample), [])
                          if not doc_token_map:
-                              print(f"[WARN] No token mapping found for document (orig={original_training_idx}, doc={doc_idx_in_sample}).")
+                              print(f"[WARN] Sample {original_training_idx} has no coreference token mapping.")
                               continue
 
                          for chain in doc._.coref_chains:
@@ -248,9 +243,11 @@ def process_batch(batch_input):
                                    antecedent_token_index = chain[antecedent_mention_index][0]
                                    if 0 <= antecedent_token_index < len(doc_token_map):
                                         antecedent_node = doc_token_map[antecedent_token_index] # Gets SAMPLE-level node ID
-                              except IndexError: continue
+                              except IndexError as e: raise e
 
-                         if antecedent_node is None or antecedent_node < 0: continue
+                         if antecedent_node is None or antecedent_node < 0: 
+                              print(f"[Warning] Sample {original_training_idx} sentences have no antecedent. ")
+                              continue
 
                          for mention_idx, mention in enumerate(chain):
                               if mention_idx == antecedent_mention_index: continue
@@ -259,7 +256,7 @@ def process_batch(batch_input):
                                    pronoun_token_index = mention[0]
                                    if 0 <= pronoun_token_index < len(doc_token_map):
                                         pronoun_node = doc_token_map[pronoun_token_index] # Gets SAMPLE-level node ID
-                              except IndexError: continue
+                              except IndexError as e: raise e
 
                               if pronoun_node is not None and pronoun_node >= 0 and pronoun_node != antecedent_node:
                                    _add_edge_local(sample_edge_data, pronoun_node, antecedent_node, "pronoun_antecedent", 1.0)
@@ -268,7 +265,7 @@ def process_batch(batch_input):
                # 3. Similarity Edges
                similarity_edges = compute_edges_similarity_ann(sample_all_sent_texts, edge_similarity_threshold)
                if similarity_edges is None or len(similarity_edges) == 0:
-                    continue
+                    print(f"[Warning] Sample {original_training_idx} has no similarity edges.")
                
                for node_i_local, node_j_local, sim_value in similarity_edges:
                     sample_level_node_i = sample_sent_index_to_node_id[node_i_local]
@@ -303,8 +300,6 @@ def process_batch(batch_input):
                     doc_idx_in_sample = item_info['doc_idx_in_sample']
                     batch_list_index = item_info['batch_list_index']
 
-                    if batch_list_index >= len(processed_docs_ordered) or batch_list_index >= len(docs_kws_scores_ordered):
-                         continue # Skip if index mismatch
                     doc = processed_docs_ordered[batch_list_index]
                     
                     matches = phrase_matcher(doc)
@@ -365,6 +360,9 @@ def compact_text(doc_text, eps=0.5, min_samples=2, min_cluster_size_to_be_core=3
      if not original_sentence_texts:
           return []
 
+     if len(original_sentence_texts) <= 5:
+          return doc_text
+     
      with torch.inference_mode():
           sentence_embeddings = _subprocess_st_model.encode(
                original_sentence_texts,
@@ -373,7 +371,8 @@ def compact_text(doc_text, eps=0.5, min_samples=2, min_cluster_size_to_be_core=3
                show_progress_bar=False,
                batch_size=EMB_BATCH_SIZE
           )
-     
+     sentence_embeddings = F.normalize(sentence_embeddings, p=2, dim=1)
+
      sentence_embeddings_np = sentence_embeddings.cpu().numpy()
      dbscan = DBSCAN(eps=eps, min_samples=min_samples, metric='cosine')
      cluster_labels = dbscan.fit_predict(sentence_embeddings_np)
@@ -389,7 +388,7 @@ def compact_text(doc_text, eps=0.5, min_samples=2, min_cluster_size_to_be_core=3
      # 2. Consider removing sentences from very small clusters
      unique_cluster_ids, counts = np.unique(cluster_labels[cluster_labels != -1], return_counts=True)
      for cluster_id, count in zip(unique_cluster_ids, counts):
-          if count < min_cluster_size_to_be_core:
+          if count <= min_cluster_size_to_be_core:
                for i, label in enumerate(cluster_labels):
                     if label == cluster_id:
                          indices_to_remove.add(i)
@@ -399,7 +398,7 @@ def compact_text(doc_text, eps=0.5, min_samples=2, min_cluster_size_to_be_core=3
           if i not in indices_to_remove:
                kept_sentences.append(original_sentence_texts[i])
 
-     return " ".join(kept_sentences)
+     return " ".join(kept_sentences) if kept_sentences else doc_text
 
 def count_words(text):
      """Counts words in a text after removing punctuation."""
@@ -618,9 +617,6 @@ def define_node_edge_opt_parallel(documents_list, edge_similarity_threshold=0.6)
      monitor_thread = threading.Thread(target=monitor_usage, args=(3, stop_event))
      monitor_thread.start()
 
-     ###########test
-     print(f"before process: {len(documents_list)}")
-     #############
      with concurrent.futures.ProcessPoolExecutor(
           max_workers=cpu_num,
           initializer=init_subprocess,
@@ -653,10 +649,6 @@ def define_node_edge_opt_parallel(documents_list, edge_similarity_threshold=0.6)
      # --- Aggregate Results ---
      all_results_flat.sort(key=lambda x: x[0]) # Sort by original_training_idx
 
-     ###########test
-     print(f"res: {len(all_results_flat)}")
-     #############
-     
      word_node_list = []
      sent_node_list = []
      edge_data_list = []
