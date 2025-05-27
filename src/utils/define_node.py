@@ -264,8 +264,8 @@ def process_batch(batch_input):
                
                # 3. Similarity Edges
                similarity_edges = compute_edges_similarity_ann(sample_all_sent_texts, edge_similarity_threshold)
-               if similarity_edges is None or len(similarity_edges) == 0:
-                    print(f"[Warning] Sample {original_training_idx} has no similarity edges.")
+               # if similarity_edges is None or len(similarity_edges) == 0:
+               #      print(f"[Warning] Sample {original_training_idx} has no similarity edges.")
                
                for node_i_local, node_j_local, sim_value in similarity_edges:
                     sample_level_node_i = sample_sent_index_to_node_id[node_i_local]
