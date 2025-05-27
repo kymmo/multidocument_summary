@@ -77,7 +77,7 @@ def auto_workers():
      try:
           mem_available_gb = psutil.virtual_memory().available / (1024 ** 3)
           # Estimate memory per worker
-          model_mem_gb = 1 # GB
+          model_mem_gb = 0.5 # GB
           cpu_cnt = multiprocessing.cpu_count()
 
           mem_limit_workers = max(1, int((mem_available_gb * 0.90) / model_mem_gb)) # Use 90% of available mem
@@ -85,7 +85,7 @@ def auto_workers():
           cpu_limit_workers = max(1, cpu_cnt - 2)
 
           workers = min(cpu_limit_workers, mem_limit_workers)
-          return max(workers, 3)
+          return max(workers, 2)
      except Exception as e:
           print(f"[WARN] Failed to determine optimal workers automatically: {e}. Falling back to 2.")
           return 2 # Fallback value
