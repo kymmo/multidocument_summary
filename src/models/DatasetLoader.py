@@ -23,9 +23,6 @@ class EvalDataset(Dataset):
           return len(self.data)
 
      def __getitem__(self, idx):
-          #####################test
-          print(f"id: {idx}, len: {len(self.data)}, {len(self.node_map)}, {len(self.summary_list)}")
-          ######################3
           return self.data[idx], self.node_map[idx], self.summary_list[idx]
 
 class OptimizedDataset(Dataset):
