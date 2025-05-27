@@ -49,7 +49,9 @@ def train_gnn(file_path, hidden_size, out_size, num_heads, val_file_path, senten
           document_in_size=sentence_in_size, ## avg of sent embs
           feat_drop=feat_drop, attn_drop=attn_drop).to(device)
      optimizer = torch.optim.Adam(gnn_model.parameters(), lr=learning_rate)
-     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=num_epochs)
+     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+          optimizer, mode='min', factor=0.75, patience=3, cooldown=0, min_lr=1e-6
+     )
      scaler = torch.cuda.amp.GradScaler()
 
      print_gpu_memory("after gnn model loading")
@@ -111,6 +113,7 @@ def train_gnn(file_path, hidden_size, out_size, num_heads, val_file_path, senten
                     
                     if torch.is_tensor(loss) and not torch.isnan(loss) and loss.requires_grad:
                          scaler.scale(loss).backward()
+                         torch.nn.utils.clip_grad_norm_(gnn_model.parameters(), max_norm=1.0)
                          scaler.step(optimizer)
                          scaler.update()
                          total_train_loss_epoch += loss.item()
@@ -183,7 +186,7 @@ def train_gnn(file_path, hidden_size, out_size, num_heads, val_file_path, senten
                               train_losses_history=train_losses, val_losses_history=val_losses):
                     break # Stop training
                
-               scheduler.step()
+               scheduler.step(avg_val_loss)
      
      except Exception as e:
           current_epoch = last_epoch_completed if last_epoch_completed >= 0 else start_epoch -1
