@@ -662,6 +662,9 @@ def get_embedded_pyg_graphs(dataset_type, docs_list, sent_similarity):
                     sentid_node_map_list = data['sentid_node_map_list']
                     doc_sents_map_list = data['doc_sents_map_list']
 
+     ############333test
+     print(f"after Step 1: word_nodeId_list: {len(word_nodeId_list)}, sent_nodeId_list: {len(sent_nodeId_list)}, edge_data_list: {len(edge_data_list)}, sentid_node_map_list: {len(sentid_node_map_list)}, doc_sents_map_list: {len(doc_sents_map_list)}")
+     ########################
      # --- Step 2: Create NetworkX Graphs (Parallel) ---
      graph_list = None
      if not latest_step or latest_step in [define_node_key, graph_create_key]:
@@ -686,7 +689,11 @@ def get_embedded_pyg_graphs(dataset_type, docs_list, sent_similarity):
                     define_data = data_cpt.load_step(step_name=define_node_key, dataset_type=dataset_type)
                     if define_data:
                          sentid_node_map_list = define_data['sentid_node_map_list']
-          
+     
+     ############333test
+     print(f"after Step 2: graph_list: {len(graph_list)}")
+     ########################
+     
      # --- Step 3: Embed Graph Nodes (Batched, on GPU) ---
      embedded_graph_list = None
      if not latest_step or latest_step in [define_node_key, graph_create_key, embed_graph_key]:
@@ -716,6 +723,10 @@ def get_embedded_pyg_graphs(dataset_type, docs_list, sent_similarity):
                               if 'embedding' in data and isinstance(data['embedding'], torch.Tensor) and data['embedding'].requires_grad:
                                    data['embedding'] = data['embedding'].detach()
 
+     ############333test
+     print(f"after Step 3: embedded_graph_list: {len(embedded_graph_list)}")
+     ########################
+     
      # --- Step 4: Convert to PyG HeteroData (Parallel) ---
      node_sent_map_list = None
      pyg_graph_list_cpu = None
@@ -778,6 +789,10 @@ def get_embedded_pyg_graphs(dataset_type, docs_list, sent_similarity):
                data = data_cpt.load_step(step_name=final_graph_key, dataset_type=dataset_type)
                pyg_graph_list_cpu = data['pyg_graph_list']
                node_sent_map_list = data['node_sent_map_list']
+     
+     ############333test
+     print(f"after Step 4: pyg_graph_list_cpu: {len(pyg_graph_list_cpu)}, node_sent_map_list: {len(node_sent_map_list)}")
+     ########################
      
      clean_memory()
      
