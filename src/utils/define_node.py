@@ -618,6 +618,9 @@ def define_node_edge_opt_parallel(documents_list, edge_similarity_threshold=0.6)
      monitor_thread = threading.Thread(target=monitor_usage, args=(3, stop_event))
      monitor_thread.start()
 
+     ###########test
+     print(f"before process: {len(documents_list)}")
+     #############
      with concurrent.futures.ProcessPoolExecutor(
           max_workers=cpu_num,
           initializer=init_subprocess,
@@ -650,6 +653,10 @@ def define_node_edge_opt_parallel(documents_list, edge_similarity_threshold=0.6)
      # --- Aggregate Results ---
      all_results_flat.sort(key=lambda x: x[0]) # Sort by original_training_idx
 
+     ###########test
+     print(f"res: {len(all_results_flat)}")
+     #############
+     
      word_node_list = []
      sent_node_list = []
      edge_data_list = []
