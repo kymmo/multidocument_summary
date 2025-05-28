@@ -158,16 +158,16 @@ def process_batch(batch_input):
                try:
                     original_idx, doc_idx, doc_text = doc_tuple
                     if not isinstance(original_idx, int) or not isinstance(doc_idx, int) or not isinstance(doc_text, str):
-                         print(f"[WARN] Skipping invalid item in list_of_docs at index {i}: {doc_tuple}") ##TODO: print is not woring
+                         print(f"[WARN] Skipping invalid item in list_of_docs at index {i}: {doc_tuple}")
                          continue
                     
                     compressed_text = compact_text(doc_text, eps=0.75, min_samples=3, min_cluster_size_to_be_core=2, EMB_BATCH_SIZE=128)
                     all_doc_texts.append(compressed_text)
                     doc_identifiers.append((original_idx, doc_idx))
                     samples_in_batch[original_idx].append({'doc_idx_in_sample': doc_idx, 'batch_list_index': i})
-               except (TypeError, ValueError) as e:
-                    print(f"[WARN] Skipping invalid item format in list_of_docs at index {i}: {doc_tuple}, Error: {e}")
-                    continue
+               except (TypeError, ValueError):
+                    traceback.print_exc()
+                    raise
 
 
           if not all_doc_texts: # all items were invalid
@@ -243,7 +243,9 @@ def process_batch(batch_input):
                                    antecedent_token_index = chain[antecedent_mention_index][0]
                                    if 0 <= antecedent_token_index < len(doc_token_map):
                                         antecedent_node = doc_token_map[antecedent_token_index] # Gets SAMPLE-level node ID
-                              except IndexError as e: raise e
+                              except IndexError:
+                                   traceback.print_exc()
+                                   raise
 
                          if antecedent_node is None or antecedent_node < 0: 
                               print(f"[Warning] Sample {original_training_idx} sentences have no antecedent. ")
@@ -256,7 +258,9 @@ def process_batch(batch_input):
                                    pronoun_token_index = mention[0]
                                    if 0 <= pronoun_token_index < len(doc_token_map):
                                         pronoun_node = doc_token_map[pronoun_token_index] # Gets SAMPLE-level node ID
-                              except IndexError as e: raise e
+                              except IndexError:
+                                   traceback.print_exc()
+                                   raise
 
                               if pronoun_node is not None and pronoun_node >= 0 and pronoun_node != antecedent_node:
                                    _add_edge_local(sample_edge_data, pronoun_node, antecedent_node, "pronoun_antecedent", 1.0)
@@ -631,6 +635,15 @@ def define_node_edge_opt_parallel(documents_list, edge_similarity_threshold=0.6)
                desc="Graph Node-Edge Batch-Processing",
                position=0
           ):
+               if future.exception() is not None:
+                    print("\n[ERROR] Worker crashed with traceback:")
+                    traceback.print_exception(
+                         type(future.exception()),
+                         future.exception(),
+                         future.exception().__traceback__
+                    )
+                    continue
+               
                try:
                     batch_result = future.result()
                     if batch_result is not None:

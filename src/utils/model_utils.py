@@ -77,7 +77,7 @@ def auto_workers():
      try:
           mem_available_gb = psutil.virtual_memory().available / (1024 ** 3)
           # Estimate memory per worker
-          model_mem_gb = 0.5 # GB
+          model_mem_gb = 1 # GB
           cpu_cnt = multiprocessing.cpu_count()
 
           mem_limit_workers = max(1, int((mem_available_gb * 0.90) / model_mem_gb)) # Use 90% of available mem
