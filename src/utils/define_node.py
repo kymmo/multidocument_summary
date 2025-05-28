@@ -16,6 +16,7 @@ import traceback
 import numpy as np
 from tqdm import tqdm
 from sklearn.cluster import DBSCAN
+import hdbscan
 
 
 from utils.model_utils import clean_memory, print_cpu_memory, print_gpu_memory, auto_workers
@@ -45,6 +46,7 @@ def init_subprocess():
      if _subprocess_st_model is None:
           _subprocess_st_model = SentenceTransformer(SENT_MODEL_NAME, device=device)
           _subprocess_st_model.eval()
+          _subprocess_st_model = _subprocess_st_model.to(device)
 
      if _subprocess_keyword_model is None:
           _subprocess_keyword_model = KeyBERT(model=_subprocess_st_model)
@@ -376,31 +378,30 @@ def compact_text(doc_text, eps=0.5, min_samples=2, min_cluster_size_to_be_core=3
                batch_size=EMB_BATCH_SIZE
           )
      sentence_embeddings = F.normalize(sentence_embeddings, p=2, dim=1)
-
      sentence_embeddings_np = sentence_embeddings.cpu().numpy()
-     dbscan = DBSCAN(eps=eps, min_samples=min_samples, metric='cosine')
-     cluster_labels = dbscan.fit_predict(sentence_embeddings_np)
-
-     num_sentences = len(original_sentence_texts)
-     indices_to_remove = set()
      
-     # 1. Remove noise points (label -1)
-     for i, label in enumerate(cluster_labels):
-          if label == -1:
-               indices_to_remove.add(i)
+     if len(original_sentence_texts) > 500:
+          clusterer = hdbscan.HDBSCAN(
+               min_cluster_size=min_cluster_size_to_be_core,
+               min_samples=min_samples,
+               metric='euclidean',
+               cluster_selection_epsilon=eps
+          )
+          cluster_labels = clusterer.fit_predict(sentence_embeddings_np)
+     else:
+          clusterer = DBSCAN(eps=eps, min_samples=min_samples, metric='cosine')
+          cluster_labels = clusterer.fit_predict(sentence_embeddings_np)
+     
+     noise_mask = (cluster_labels == -1)
+     unique_clusters, counts = np.unique(cluster_labels, return_counts=True)
+     small_clusters = unique_clusters[
+          (counts <= min_cluster_size_to_be_core) &
+          (unique_clusters != -1)
+     ]
+     small_cluster_mask = np.isin(cluster_labels, small_clusters)
 
-     # 2. Consider removing sentences from very small clusters
-     unique_cluster_ids, counts = np.unique(cluster_labels[cluster_labels != -1], return_counts=True)
-     for cluster_id, count in zip(unique_cluster_ids, counts):
-          if count <= min_cluster_size_to_be_core:
-               for i, label in enumerate(cluster_labels):
-                    if label == cluster_id:
-                         indices_to_remove.add(i)
-
-     kept_sentences = []
-     for i in range(num_sentences):
-          if i not in indices_to_remove:
-               kept_sentences.append(original_sentence_texts[i])
+     remove_mask = noise_mask | small_cluster_mask
+     kept_sentences = [s for s, keep in zip(original_sentence_texts, ~remove_mask) if keep]
 
      return " ".join(kept_sentences) if kept_sentences else doc_text
 

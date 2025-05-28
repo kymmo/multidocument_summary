@@ -14,3 +14,4 @@ faiss-gpu
 accelerate
 pynvml
 pytorch_metric_learning
+hdbscan

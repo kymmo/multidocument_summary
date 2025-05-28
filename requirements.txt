@@ -77,6 +77,8 @@ fsspec[http]==2024.12.0
     #   huggingface-hub
     #   torch
     #   torch-geometric
+hdbscan==0.8.40
+    # via -r requirements.in
 huggingface-hub==0.27.1
     # via
     #   accelerate
@@ -99,6 +101,7 @@ jinja2==3.1.5
     #   torch-geometric
 joblib==1.4.2
     # via
+    #   hdbscan
     #   nltk
     #   scikit-learn
 keybert==0.8.5
@@ -144,6 +147,7 @@ numpy==1.26.4
     #   blis
     #   contourpy
     #   datasets
+    #   hdbscan
     #   keybert
     #   matplotlib
     #   pandas
@@ -241,11 +245,13 @@ safetensors==0.5.2
     #   transformers
 scikit-learn==1.6.1
     # via
+    #   hdbscan
     #   keybert
     #   pytorch-metric-learning
     #   sentence-transformers
 scipy==1.13.1
     # via
+    #   hdbscan
     #   scikit-learn
     #   sentence-transformers
 sentence-transformers==3.3.1
