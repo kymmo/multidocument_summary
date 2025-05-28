@@ -76,13 +76,11 @@ def auto_workers():
      """Estimates optimal number of workers based on CPU and memory."""
      try:
           mem_available_gb = psutil.virtual_memory().available / (1024 ** 3)
-          # Estimate memory per worker
-          model_mem_gb = 1 # GB
+          model_mem_gb = 0.7 # /GB. Estimate memory per worker
           cpu_cnt = multiprocessing.cpu_count()
 
           mem_limit_workers = max(1, int((mem_available_gb * 0.90) / model_mem_gb)) # Use 90% of available mem
-          # Leave at least one CPU core free for the main process and OS
-          cpu_limit_workers = max(1, cpu_cnt - 2)
+          cpu_limit_workers = max(1, cpu_cnt - 1)
 
           workers = min(cpu_limit_workers, mem_limit_workers)
           return max(workers, 2)
