@@ -46,7 +46,7 @@ def init_subprocess():
      if _subprocess_st_model is None:
           _subprocess_st_model = SentenceTransformer(SENT_MODEL_NAME, device=device)
           _subprocess_st_model.eval()
-          _subprocess_st_model = _subprocess_st_model.to(device)
+          # _subprocess_st_model = _subprocess_st_model.to(device)
 
      if _subprocess_keyword_model is None:
           _subprocess_keyword_model = KeyBERT(model=_subprocess_st_model)
@@ -176,7 +176,7 @@ def process_batch(batch_input):
                          print(f"[WARN] Skipping invalid item in list_of_docs at index {i}: {doc_tuple}")
                          continue
                     
-                    compressed_text = compact_text(doc_text, eps=0.75, min_samples=3, min_cluster_size_to_be_core=2, EMB_BATCH_SIZE=32)
+                    compressed_text = compact_text(doc_text, eps=0.75, min_samples=3, min_cluster_size_to_be_core=2, EMB_BATCH_SIZE=16)
                     all_doc_texts.append(compressed_text)
                     doc_identifiers.append((original_idx, doc_idx))
                     samples_in_batch[original_idx].append({'doc_idx_in_sample': doc_idx, 'batch_list_index': i})
@@ -393,7 +393,7 @@ def compact_text(doc_text, eps=0.5, min_samples=2, min_cluster_size_to_be_core=3
                     embeddings = _subprocess_st_model.encode(
                          chunk,
                          convert_to_tensor=True,
-                         device=device,
+                         device='cpu',
                          batch_size=min(EMB_BATCH_SIZE, len(chunk)))
                     embeddings = F.normalize(embeddings, p=2, dim=1)
                     all_embeddings.append(embeddings.cpu())
