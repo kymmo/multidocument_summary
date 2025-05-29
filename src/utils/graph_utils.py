@@ -25,6 +25,10 @@ def get_embed_graph(file_path,dataset_type, sent_similarity=0.6):
      clean_memory()
      print_gpu_memory("after graph embedding")
      
+     ##########test
+     print(f"After load len: docs_list: {len(docs_list)}, summary_list: {len(summary_list)}")
+     print(f"Created graph len: sample_graphs: {len(sample_graphs)}, node_maps: {len(node_maps)}")
+     ###################
      return sample_graphs
 
 def get_embed_graph_node_map(file_path,dataset_type, sent_similarity=0.6):

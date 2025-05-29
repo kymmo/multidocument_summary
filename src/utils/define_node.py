@@ -51,6 +51,19 @@ def init_subprocess():
      if _subprocess_keyword_model is None:
           _subprocess_keyword_model = KeyBERT(model=_subprocess_st_model)
 
+def cleanup_subprocess():
+     global _subprocess_coref_nlp, _subprocess_st_model, _subprocess_keyword_model
+
+     del _subprocess_coref_nlp
+     del _subprocess_st_model
+     del _subprocess_keyword_model
+
+     _subprocess_coref_nlp = None
+     _subprocess_st_model = None
+     _subprocess_keyword_model = None
+
+     clean_memory()
+          
 
 def compute_edges_similarity(sents, edge_threshold, encode_batch_size=256, sim_batch_size=1024):
      if not sents:
@@ -660,6 +673,8 @@ def define_node_edge_opt_parallel(documents_list, edge_similarity_threshold=0.6)
      stop_event.set()
      monitor_thread.join()
 
+     cleanup_subprocess()
+     
      # --- Aggregate Results ---
      all_results_flat.sort(key=lambda x: x[0]) # Sort by original_training_idx
 
