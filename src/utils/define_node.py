@@ -176,7 +176,7 @@ def process_batch(batch_input):
                          print(f"[WARN] Skipping invalid item in list_of_docs at index {i}: {doc_tuple}")
                          continue
                     
-                    compressed_text = compact_text(doc_text, eps=0.75, min_samples=3, min_cluster_size_to_be_core=2, EMB_BATCH_SIZE=128)
+                    compressed_text = compact_text(doc_text, eps=0.75, min_samples=3, min_cluster_size_to_be_core=2, EMB_BATCH_SIZE=32)
                     all_doc_texts.append(compressed_text)
                     doc_identifiers.append((original_idx, doc_idx))
                     samples_in_batch[original_idx].append({'doc_idx_in_sample': doc_idx, 'batch_list_index': i})
@@ -371,7 +371,7 @@ def _add_edge_local(edge_data_dict, node1_idx, node2_idx, edge_type, weight=1.0)
 
      edge_data_dict[key].append({'type': edge_type, 'weight': weight})
 
-def compact_text(doc_text, eps=0.5, min_samples=2, min_cluster_size_to_be_core=3, EMB_BATCH_SIZE=128):
+def compact_text(doc_text, eps=0.5, min_samples=2, min_cluster_size_to_be_core=3, EMB_BATCH_SIZE=32):
      global _subprocess_coref_nlp, _subprocess_st_model
      
      doc = _subprocess_coref_nlp(doc_text)
@@ -381,19 +381,25 @@ def compact_text(doc_text, eps=0.5, min_samples=2, min_cluster_size_to_be_core=3
 
      if len(original_sentence_texts) <= 5:
           return doc_text
-     
-     with torch.inference_mode():
-          sentence_embeddings = _subprocess_st_model.encode(
-               original_sentence_texts,
-               convert_to_tensor=True,
-               device=device,
-               show_progress_bar=False,
-               batch_size=EMB_BATCH_SIZE
-          )
-     sentence_embeddings = F.normalize(sentence_embeddings, p=2, dim=1)
-     sentence_embeddings_np = sentence_embeddings.cpu().numpy()
-     
-     if len(original_sentence_texts) > 500:
+          
+     MAX_SENTENCES = 512
+     if len(original_sentence_texts) > MAX_SENTENCES:
+          chunks = [original_sentence_texts[i:i+MAX_SENTENCES]
+                    for i in range(0, len(original_sentence_texts), MAX_SENTENCES)]
+          
+          all_embeddings = []
+          for chunk in chunks:
+               with torch.inference_mode(), torch.no_grad(), torch.cuda.amp.autocast():
+                    embeddings = _subprocess_st_model.encode(
+                         chunk,
+                         convert_to_tensor=True,
+                         device=device,
+                         batch_size=min(EMB_BATCH_SIZE, len(chunk)))
+                    embeddings = F.normalize(embeddings, p=2, dim=1)
+                    all_embeddings.append(embeddings.cpu())
+          
+          sentence_embeddings_np = np.concatenate([e.numpy() for e in all_embeddings])
+          
           clusterer = hdbscan.HDBSCAN(
                min_cluster_size=min_cluster_size_to_be_core,
                min_samples=min_samples,
@@ -402,6 +408,16 @@ def compact_text(doc_text, eps=0.5, min_samples=2, min_cluster_size_to_be_core=3
           )
           cluster_labels = clusterer.fit_predict(sentence_embeddings_np)
      else:
+          with torch.inference_mode(), torch.no_grad(), torch.cuda.amp.autocast():
+               sentence_embeddings = _subprocess_st_model.encode(
+                    original_sentence_texts,
+                    convert_to_tensor=True,
+                    device=device,
+                    show_progress_bar=False,
+                    batch_size=EMB_BATCH_SIZE
+               )
+          sentence_embeddings = F.normalize(sentence_embeddings, p=2, dim=1)
+          sentence_embeddings_np = sentence_embeddings.cpu().numpy()
           clusterer = DBSCAN(eps=eps, min_samples=min_samples, metric='cosine')
           cluster_labels = clusterer.fit_predict(sentence_embeddings_np)
      
