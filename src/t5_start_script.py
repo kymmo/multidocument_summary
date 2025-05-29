@@ -52,6 +52,11 @@ def run():
                          default=4,
                          help='For LLM gradient accumulation training.')
      
+     parser.add_argument('--gnn-accumulation-steps',
+                         type=int,
+                         default=4,
+                         help='For GNN gradient accumulation training.')
+     
      parser.add_argument('--patience',
                          type=int,
                          default=5,
@@ -71,6 +76,11 @@ def run():
                          type=int,
                          default=8,
                          help='Number of head of gnn model.')
+     
+     parser.add_argument('--gnn-hidden-size',
+                         type=int,
+                         default=512,
+                         help='Hidden layer size of gnn model.')
      
      ## T5 learning rate dict
      parser.add_argument('--t5-lr-encoder-last2',
@@ -107,12 +117,14 @@ def run():
      print(f"GNN Batch Size:              {args.gnn_batch_size}")
      print(f"LLM Batch Size:              {args.llm_batch_size}")
      print(f"Early Stopping Patience:     {args.patience}")
-     print(f"Training Accumulation Step:   {args.llm_accumulate_step}")
+     print(f"LLM Accumulation Step:       {args.llm_accumulate_step}")
      print(f"Sentence Sim Threshold:      {args.sent_similarity_threshold}")
      print(f"GNN Output Size:             {args.gnn_out_size}")
      print(f"GNN Num Heads:               {args.num_heads}")
-     print(f"T5 Encoder LR (Last 2):    {args.t5_lr_encoder_last2}")
-     print(f"T5 Decoder LR (Last 2):    {args.t5_lr_decoder_last2}")
+     print(f"GNN Hidden Size:             {args.gnn_hidden_size}")
+     print(f"GNN Accumulation Step:       {args.gnn_accumulation_steps}")
+     print(f"T5 Encoder LR (Last 2):      {args.t5_lr_encoder_last2}")
+     print(f"T5 Decoder LR (Last 2):      {args.t5_lr_decoder_last2}")
      print(f"T5 Projector LR:             {args.t5_lr_projector}")
      print(f"Scheduler Warmup Ratio:      {args.warmup_ratio}")
      print("-" * 20)
@@ -127,6 +139,8 @@ def run():
                llm_accumulate_step=args.llm_accumulate_step,
                patience=args.patience,
                gnn_out_size = args.gnn_out_size,
+               gnn_hidden_size = args.gnn_hidden_size,
+               gnn_accumulation_steps=args.gnn_accumulation_steps,
                num_heads = args.num_heads,
                sent_similarity_threshold=args.sent_similarity_threshold, # Use underscore version here
                t5_learning_rates_dict=t5_learning_rates_dict_from_args,

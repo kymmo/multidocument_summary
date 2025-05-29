@@ -52,7 +52,8 @@ def eval_t5_summary(eval_data_path, max_summary_length, batch_size = 16, sent_si
                     batched_graph = Batch.from_data_list(batch_graph).to(device, non_blocking=True)
                     sent_text = batched_graph['sentence'].text
                     
-                    sentence_embeddings, projected_sent_embeddings = gnn_model(batched_graph)
+                    sentence_embeddings, _ = gnn_model(batched_graph)
+                    sentence_embeddings = sentence_embeddings.detach()
                     concat_embs = get_combined_embed2(batch_graph, sentence_embeddings, sent_text, long_text_encoder)
                     summaries = generate_t5_summary(fine_tuned_t5, concat_embs, max_summary_length)
                     
@@ -77,12 +78,12 @@ def generate_t5_summary(fine_tuned_t5, combin_embeddings_list, max_summary_lengt
                "early_stopping": True,
                "repetition_penalty": 2.0,
                "no_repeat_ngram_size": 4,
-               "length_penalty": 1.0,
-               "temperature": 0.9,
+               "length_penalty": 0.8,
                "do_sample": False,
-               "top_k": 50,
-               "top_p": 0.95,
-               "bos_token_id": t5_tokenizer.pad_token_id,
+               # "temperature": 0.9,
+               # "top_k": 50,
+               # "top_p": 0.95,
+               "bos_token_id": t5_tokenizer.bos_token_id or t5_tokenizer.pad_token_id,
                "eos_token_id": t5_tokenizer.eos_token_id
           }
           

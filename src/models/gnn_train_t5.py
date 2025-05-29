@@ -17,6 +17,7 @@ from utils.model_utils import freeze_model, clean_memory, print_gpu_memory, prin
 
 def train_gnn(file_path, hidden_size, out_size, num_heads, val_file_path, sentence_in_size = 768, word_in_size = 768, projection_dim = 768,
                learning_rate=0.001, num_epochs=20, feat_drop=0.2, attn_drop=0.2, batch_size=32, save_method='entire_model', patience=5, sent_similarity_threshold = 0.6,
+               gnn_accumulation_steps = 4,
                device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')):
 
      clean_memory()
@@ -50,7 +51,7 @@ def train_gnn(file_path, hidden_size, out_size, num_heads, val_file_path, senten
           feat_drop=feat_drop, attn_drop=attn_drop).to(device)
      optimizer = torch.optim.Adam(gnn_model.parameters(), lr=learning_rate)
      scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-          optimizer, mode='min', factor=0.75, patience=3, cooldown=0, min_lr=1e-6
+          optimizer, mode='min', factor=0.7, patience=3, cooldown=0, min_lr=1e-6
      )
      scaler = torch.cuda.amp.GradScaler()
 
@@ -88,17 +89,17 @@ def train_gnn(file_path, hidden_size, out_size, num_heads, val_file_path, senten
           for epoch in range(start_epoch, num_epochs):
                last_epoch_completed = epoch
                gnn_model.train()
-               total_train_loss_epoch  = 0
+               total_train_loss_epoch  = 0.0
                num_train_batches_processed = 0
                train_empty_batch_cnt = 0
+               optimizer.zero_grad()
                
                print('--- GNN Training ---')
                for batch_idx, batch in enumerate(train_dataloader):
                     batch = batch.to(device)
-
-                    optimizer.zero_grad()
+                    
                     with torch.cuda.amp.autocast():
-                         sentence_embeddings, projected_sent_embeddings = gnn_model(batch)
+                         _, projected_sent_embeddings = gnn_model(hetero_data=batch, need_projection=True)
                          
                          # contrasive learning
                          s2s_keys = [EdgeKeyTuple.SENT_SIM.value, EdgeKeyTuple.SENT_ANT.value]
@@ -112,25 +113,31 @@ def train_gnn(file_path, hidden_size, out_size, num_heads, val_file_path, senten
                               continue
                     
                     if torch.is_tensor(loss) and not torch.isnan(loss) and loss.requires_grad:
-                         scaler.scale(loss).backward()
-                         torch.nn.utils.clip_grad_norm_(gnn_model.parameters(), max_norm=1.0)
-                         scaler.step(optimizer)
-                         scaler.update()
+                         scaled_loss  = loss / gnn_accumulation_steps
+                         scaler.scale(scaled_loss).backward()
                          total_train_loss_epoch += loss.item()
                          num_train_batches_processed += 1
+                         
+                         if (batch_idx + 1) % gnn_accumulation_steps == 0 or (batch_idx + 1) >= len(train_dataloader):
+                              # scaler.unscale_(optimizer)
+                              # torch.nn.utils.clip_grad_norm_(gnn_model.parameters(), max_norm=5.0)
+
+                              scaler.step(optimizer)
+                              scaler.update()
+                              optimizer.zero_grad()
                     else:
                          print(f"[Warning] NaN loss in training batch {batch_idx}. Skipping update.")
                
                avg_train_loss = total_train_loss_epoch / num_train_batches_processed if num_train_batches_processed > 0 else 0
                train_losses.append(avg_train_loss)
                print(f"[Training] Get {train_empty_batch_cnt} / {len(train_dataloader)} EMPTY batch.")
-               print(f"[Training] Epoch {epoch + 1} / {num_epochs}, Loss: {avg_train_loss:.4f}, Training Learning Rate: {scheduler.get_last_lr()[0]:.6f}")
+               print(f"[Training] Epoch {epoch + 1} / {num_epochs}, Loss: {avg_train_loss:.4f}, Training Learning Rate: {optimizer.param_groups[0]['lr']:.6f}")
                
                
                # --- Validation for Early Stop ---
                print('--- GNN Validation ---')
                gnn_model.eval()
-               total_val_loss = 0
+               total_val_loss = 0.0
                num_val_batches_processed = 0
                val_empty_batch_cnt = 0
                with torch.no_grad():
@@ -138,7 +145,7 @@ def train_gnn(file_path, hidden_size, out_size, num_heads, val_file_path, senten
                          batch = batch.to(device)
                          
                          with torch.cuda.amp.autocast():
-                              sentence_embeddings, projected_sent_embeddings = gnn_model(batch)
+                              _, projected_sent_embeddings = gnn_model(hetero_data=batch, need_projection=True)
                          
                               # contrasive learning
                               s2s_keys = [EdgeKeyTuple.SENT_SIM.value, EdgeKeyTuple.SENT_ANT.value]
@@ -161,13 +168,13 @@ def train_gnn(file_path, hidden_size, out_size, num_heads, val_file_path, senten
                val_losses.append(avg_val_loss)
                print(f"[Validation] Get {val_empty_batch_cnt} / {len(val_dataloader)} EMPTY batch.")
                print(f"[Validation] Epoch {epoch + 1}/{num_epochs}, Loss: {avg_val_loss:.4f}")
-     
+               
+               current_early_stopper_state = early_stopper.get_state()
+               scheduler.step(avg_val_loss)
+               
                models_to_save = {'gnn_model': gnn_model}
                optimizers_to_save = {'optimizer': optimizer}
                schedulers_to_save = {'scheduler': scheduler}
-               
-               ## check point station
-               current_early_stopper_state = early_stopper.get_state()
                ckpt_path = ckpt_mgr.save(
                     epoch=epoch,
                     models=models_to_save,
@@ -179,15 +186,13 @@ def train_gnn(file_path, hidden_size, out_size, num_heads, val_file_path, senten
                     val_losses=val_losses
                )
                print(f"[checkpoint saved] {epoch}-th epoch checkpoint has saved to path {ckpt_path}")
-
+               
                if early_stopper(val_loss=avg_val_loss, epoch=epoch,
                               models=models_to_save, optimizers=optimizers_to_save,
                               schedulers=schedulers_to_save, scaler=scaler,
                               train_losses_history=train_losses, val_losses_history=val_losses):
                     break # Stop training
                
-               scheduler.step(avg_val_loss)
-     
      except Exception as e:
           current_epoch = last_epoch_completed if last_epoch_completed >= 0 else start_epoch -1
           emergency_path = ckpt_mgr._get_filepath(epoch=current_epoch, emergency=True)
@@ -233,7 +238,9 @@ def train_gnn(file_path, hidden_size, out_size, num_heads, val_file_path, senten
           raise ValueError(f'save_method has no value as {save_method}.')
      
      print("--- GNN Training Finish! ---")
-     del gnn_model, best_gnn_model
+     del gnn_model
+     if best_gnn_model is not None:
+          del best_gnn_model
      del optimizer, scheduler, scaler
      clean_memory()
 

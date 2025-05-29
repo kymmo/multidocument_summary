@@ -30,7 +30,7 @@ freeze_model(t5_model)
 
 def train_gnn_t5(dataset_path, hidden_size, out_size, num_heads=8, learning_rate=0.001, num_epochs=20, 
                feat_drop=0.1, attn_drop=0.1, gnn_batch_size=16, llm_batch_size=4, 
-               patience=5, llm_accumulate_step=4, sent_similarity_threshold=0.6, 
+               patience=5, llm_accumulate_step=4, sent_similarity_threshold=0.6, gnn_accumulation_steps=4,
                learning_rates_dict = None, warmup_ratio=0.1):
      ## gnn training, t5 freezed
      train_data_path = os.path.join(dataset_path, "train.jsonl")
@@ -57,6 +57,7 @@ def train_gnn_t5(dataset_path, hidden_size, out_size, num_heads=8, learning_rate
           batch_size=gnn_batch_size,
           save_method='entire_model',
           patience=patience,
+          gnn_accumulation_steps=gnn_accumulation_steps,
           sent_similarity_threshold=sent_similarity_threshold,
      )
      gnn_end_time = time.time()
@@ -234,14 +235,14 @@ def fine_tune_t5(file_path, val_file_path, out_size, num_epochs = 20,
                          sent_text = batched_graph['sentence'].text
                          
                          with torch.no_grad():
-                              sentence_embeddings, projected_sent_embeddings = gnn_model(batched_graph)
-                         sentence_embeddings = sentence_embeddings.detach()
+                              sentence_embeddings, _ = gnn_model(batched_graph)
+                              sentence_embeddings = sentence_embeddings.detach()
                          concat_embs_list = get_combined_embed2(batch_graph, sentence_embeddings, sent_text, long_text_encoder)
                          
                          outputs = custom_t5_model(combin_embeddings_list = concat_embs_list, label_summaries=batch_summary)
                          loss = outputs.loss
                          scaled_loss  = loss / accumulate_step
-                         
+                    
                     scaler.scale(scaled_loss).backward()
                     total_loss += loss.item()
                     processed_batches_this_epoch += 1
@@ -253,9 +254,6 @@ def fine_tune_t5(file_path, val_file_path, out_size, num_epochs = 20,
                          global_step += 1
                          scheduler.step()
                          optimizer.zero_grad()
-                         
-                         if global_step % 25 == 0: # Log every 100 steps example
-                              print(f"[T5 Scheduler] Optimize Step {global_step}, Current LR: {scheduler.get_last_lr()[0]:.8f}")
                          
                avg_train_loss = total_loss / processed_batches_this_epoch if processed_batches_this_epoch > 0 else 0
                train_losses.append(avg_train_loss)
@@ -271,14 +269,14 @@ def fine_tune_t5(file_path, val_file_path, out_size, num_epochs = 20,
                          val_graph, val_map, val_summary = val_batch
                          batched_graph = Batch.from_data_list(val_graph).to(device, non_blocking=True)
                          
-                         with torch.cuda.amp.autocast():
-                              sent_text = batched_graph['sentence'].text
-                              sentence_embeddings, projected_sent_embeddings = gnn_model(batched_graph)
-                              concat_embs_list = get_combined_embed2(val_graph, sentence_embeddings, sent_text, long_text_encoder)
-                              
-                              outputs = custom_t5_model(combin_embeddings_list=concat_embs_list, label_summaries=val_summary)
-                              total_val_loss += outputs.loss.item()
-                              num_val_batches += 1
+                         sent_text = batched_graph['sentence'].text
+                         sentence_embeddings, _ = gnn_model(batched_graph)
+                         sentence_embeddings = sentence_embeddings.detach()
+                         concat_embs_list = get_combined_embed2(val_graph, sentence_embeddings, sent_text, long_text_encoder)
+                         
+                         outputs = custom_t5_model(combin_embeddings_list=concat_embs_list, label_summaries=val_summary)
+                         total_val_loss += outputs.loss.item()
+                         num_val_batches += 1
                
                avg_val_loss = total_val_loss / num_val_batches if num_val_batches > 0 else 0
                val_losses.append(avg_val_loss)

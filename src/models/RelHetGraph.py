@@ -58,7 +58,7 @@ class RelHetGraph(nn.Module):
                nn.Linear(out_size // 2, projection_dim)
           )
 
-     def forward(self, hetero_data):
+     def forward(self, hetero_data, need_projection = False):
           h_transformed = {}
           if 'sentence' in hetero_data.node_types:
                h_transformed['sentence'] = F.relu(self.lin_sent(hetero_data['sentence'].x))
@@ -88,7 +88,9 @@ class RelHetGraph(nn.Module):
                # sentence_embeddings_gnn = F.relu(sentence_output_h2)
                # sentence_embeddings_gnn = self.feat_drop(sentence_embeddings_gnn)
                sentence_embeddings_gnn = sentence_output_h2
-               sentence_embeddings_projected = self.projection_head_sentence(sentence_output_h2)
+               
+               if need_projection:
+                    sentence_embeddings_projected = self.projection_head_sentence(sentence_output_h2)
 
           return sentence_embeddings_gnn, sentence_embeddings_projected
      
