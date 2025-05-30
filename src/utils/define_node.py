@@ -36,6 +36,8 @@ _subprocess_keyword_model = None
 
 def init_subprocess():
      """Initialize models within each worker process."""
+     # faiss.omp_set_num_threads(max(auto_workers() // 2, 2))
+     
      global _subprocess_coref_nlp, _subprocess_st_model, _subprocess_keyword_model
 
      if _subprocess_coref_nlp is None:
@@ -536,8 +538,6 @@ def compute_edges_similarity_ann(sentence_texts, threshold, EMB_BATCH_SIZE=32):
      embeddings_tensor = np.ascontiguousarray(embeddings_tensor) # to cpu
      n_sents, dim = embeddings_np.shape
      
-     # faiss.omp_set_num_threads(auto_workers() // 2)
-
      index = faiss.IndexFlatIP(dim)
      edges = []
      try:
