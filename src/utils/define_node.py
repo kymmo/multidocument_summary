@@ -532,7 +532,8 @@ def compute_edges_similarity_ann(sentence_texts, threshold, EMB_BATCH_SIZE=32):
           print(f"[WARN][Worker {os.getpid()}] Invalid embeddings tensor shape after encoding.")
           return []
 
-     embeddings_np = embeddings_tensor.cpu().numpy().astype('float16')
+     embeddings_np = embeddings_tensor.cpu().numpy().astype('float32')
+     embeddings_tensor = np.ascontiguousarray(embeddings_tensor) # to cpu
      n_sents, dim = embeddings_np.shape
      
      # faiss.omp_set_num_threads(auto_workers() // 2)
