@@ -255,6 +255,10 @@ def fine_tune_t5(file_path, val_file_path, out_size, num_epochs = 20,
                          scheduler.step()
                          optimizer.zero_grad()
                          
+                    ### for keeping connection
+                    if (batch_idx + 1) % 200 == 0:
+                         print(f"Training keeping alive. Processing {batch_idx}-th batch, learning rate: {scheduler.get_last_lr()[0]:.6f}")
+                         
                avg_train_loss = total_loss / processed_batches_this_epoch if processed_batches_this_epoch > 0 else 0
                train_losses.append(avg_train_loss)
                print(f"[Training] Epoch {epoch+1} / {num_epochs}, Loss: {avg_train_loss:.4f}, Learning Rate: {scheduler.get_last_lr()[0]:.6f}")
