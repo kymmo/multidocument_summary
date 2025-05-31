@@ -273,7 +273,7 @@ def fine_tune_t5(file_path, val_file_path, out_size, num_epochs = 20,
                total_val_loss = 0.0
                num_val_batches = 0
                with torch.no_grad(), torch.cuda.amp.autocast():
-                    for val_batch in tqdm(enumerate(val_dataloader), total=len(val_dataloader), desc=f"{epoch + 1}-th Val Epoch"):
+                    for val_batch_id, val_batch in tqdm(enumerate(val_dataloader), total=len(val_dataloader), desc=f"{epoch + 1}-th Val Epoch"):
                          val_graph, val_map, val_summary = val_batch
                          batched_graph = Batch.from_data_list(val_graph).to(device, non_blocking=True)
                          
