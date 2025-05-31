@@ -6,6 +6,7 @@ import math
 import threading
 import torch.nn.functional as F
 from torch_geometric.data import Batch
+from tqdm.auto import tqdm
 from torch.utils.data import DataLoader as data_DataLoader
 from transformers import T5Tokenizer, T5ForConditionalGeneration, T5Config, get_linear_schedule_with_warmup 
 
@@ -91,7 +92,7 @@ def get_combined_embed2(batch_graph_list, gnn_embeddings, sent_text, encoder):
           with torch.no_grad(), torch.cuda.amp.autocast():
                sent_embs = encoder.encode_batch(graph_sents, batch_size=16)
           
-          graph_sent_embs.append(sent_embs)
+          graph_sent_embs.append(sent_embs.detach().cpu())
 
      for i_th, graph in enumerate(batch_graph_list): # for each embs of graph
           graph_sent_num = graph['sentence'].x.shape[0]
@@ -215,7 +216,7 @@ def fine_tune_t5(file_path, val_file_path, out_size, num_epochs = 20,
           long_text_encoder = LongTextEncoder(t5_tokenizer, t5_model)
           
           stop_event = threading.Event()
-          monitor_thread = threading.Thread(target=monitor_usage, args=(3, stop_event, "T5 Training"))
+          monitor_thread = threading.Thread(target=monitor_usage, args=(1, stop_event, "T5 Training"))
           monitor_thread.start()
      
           for epoch in range(start_epoch, num_epochs):
@@ -226,7 +227,7 @@ def fine_tune_t5(file_path, val_file_path, out_size, num_epochs = 20,
                skip_batches = accumulated_batches if resume and epoch == start_epoch else 0
                optimizer.zero_grad()
 
-               for batch_idx, batch in enumerate(train_dataloader):
+               for batch_idx, batch in tqdm(enumerate(train_dataloader), total=len(train_dataloader), desc=f"{epoch + 1}-th Train Epoch"):
                     if batch_idx < skip_batches:
                          continue
                
@@ -246,7 +247,6 @@ def fine_tune_t5(file_path, val_file_path, out_size, num_epochs = 20,
                          scaled_loss  = loss / accumulate_step
                          
                          del sentence_embeddings, sent_text
-                         clean_memory()
                     
                     scaler.scale(scaled_loss).backward()
                     total_loss += loss.item()
@@ -260,6 +260,9 @@ def fine_tune_t5(file_path, val_file_path, out_size, num_epochs = 20,
                          scheduler.step()
                          optimizer.zero_grad(set_to_none=True)
                          
+                    del outputs, concat_embs_list, batched_graph
+                    clean_memory()
+                         
                avg_train_loss = total_loss / processed_batches_this_epoch if processed_batches_this_epoch > 0 else 0
                train_losses.append(avg_train_loss)
                print(f"[Training] Epoch {epoch+1} / {num_epochs}, Loss: {avg_train_loss:.4f}, Learning Rate: {scheduler.get_last_lr()[0]:.6f}")
@@ -270,7 +273,7 @@ def fine_tune_t5(file_path, val_file_path, out_size, num_epochs = 20,
                total_val_loss = 0.0
                num_val_batches = 0
                with torch.no_grad(), torch.cuda.amp.autocast():
-                    for val_batch in val_dataloader:
+                    for val_batch in tqdm(enumerate(val_dataloader), total=len(val_dataloader), desc=f"{epoch + 1}-th Val Epoch"):
                          val_graph, val_map, val_summary = val_batch
                          batched_graph = Batch.from_data_list(val_graph).to(device, non_blocking=True)
                          

@@ -14,7 +14,7 @@ from sentence_transformers import SentenceTransformer
 import faiss
 import traceback
 import numpy as np
-from tqdm import tqdm
+from tqdm.auto import tqdm
 from sklearn.cluster import DBSCAN
 import hdbscan
 

@@ -74,7 +74,7 @@ def print_cpu_memory(label, interval = 1):
 
 def monitor_usage(interval, stop_event, label):
      """Monitors CPU and memory usage."""
-     while not stop_event.wait(20 * 60): ## every 20 mins
+     while not stop_event.wait(15 * 60): ## every 15 mins
           print_cpu_memory(label, interval)
           print_gpu_memory(label)
           
