@@ -71,7 +71,13 @@ def print_cpu_memory(label, interval = 1):
      cpu_percent = psutil.cpu_percent(interval=interval)  ## 1 sec interval
      
      print(f"[{label}] CPU used: {cpu_percent}%. Memory used: {memory.percent}%. Memory Detail: {memory.used / (1024 ** 3):.2f} GB | remaining: {memory.available / (1024 ** 3):.2f} GB")
-     
+
+def monitor_usage(interval, stop_event, label):
+     """Monitors CPU and memory usage."""
+     while not stop_event.wait(20 * 60): ## every 20 mins
+          print_cpu_memory(label, interval)
+          print_gpu_memory(label)
+          
 def auto_workers():
      """Estimates optimal number of workers based on CPU and memory."""
      try:

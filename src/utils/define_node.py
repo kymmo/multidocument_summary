@@ -19,7 +19,7 @@ from sklearn.cluster import DBSCAN
 import hdbscan
 
 
-from utils.model_utils import clean_memory, print_cpu_memory, print_gpu_memory, auto_workers
+from utils.model_utils import clean_memory, monitor_usage, auto_workers
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
@@ -618,7 +618,7 @@ def define_node_edge_opt_parallel(documents_list, edge_similarity_threshold=0.6)
 
      # Start memory monitor
      stop_event = threading.Event()
-     monitor_thread = threading.Thread(target=monitor_usage, args=(3, stop_event))
+     monitor_thread = threading.Thread(target=monitor_usage, args=(3, stop_event, "processing sample"))
      monitor_thread.start()
 
      with concurrent.futures.ProcessPoolExecutor(
@@ -684,10 +684,3 @@ def define_node_edge_opt_parallel(documents_list, edge_similarity_threshold=0.6)
      clean_memory()
 
      return word_node_list, sent_node_list, edge_data_list, sentId_nodeId_list, doc_sents_list
-
-def monitor_usage(interval, stop_event):
-     """Monitors CPU and memory usage."""
-     while not stop_event.wait(20 * 60): ## every 20 mins
-          label = "processing sample"
-          print_cpu_memory(label, interval)
-          print_gpu_memory(label)

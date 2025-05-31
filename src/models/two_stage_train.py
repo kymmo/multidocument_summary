@@ -1,13 +1,11 @@
 import torch
 import os
 from pathlib import Path
-import torch.nn as nn
 import time
 import math
-import shutil
+import threading
 import torch.nn.functional as F
 from torch_geometric.data import Batch
-from torch.cuda.amp import autocast
 from torch.utils.data import DataLoader as data_DataLoader
 from transformers import T5Tokenizer, T5ForConditionalGeneration, T5Config, get_linear_schedule_with_warmup 
 
@@ -15,7 +13,7 @@ from models.DatasetLoader import EvalDataset, custom_collate_fn
 from models.CustomT5 import CustomT5
 from models.gnn_train_t5 import train_gnn
 from models.CheckPointManager import ModelCheckpointManager, DataType
-from utils.model_utils import freeze_model, clean_memory, print_gpu_memory, print_and_save_loss_curve
+from utils.model_utils import freeze_model, clean_memory, print_gpu_memory, print_and_save_loss_curve, monitor_usage
 from models.LongTextEncoder import LongTextEncoder
 from models.EarlyStopper import EarlyStopper
 from models.ModelFileManager import model_fm
@@ -215,6 +213,10 @@ def fine_tune_t5(file_path, val_file_path, out_size, num_epochs = 20,
      
      try:
           long_text_encoder = LongTextEncoder(t5_tokenizer, t5_model)
+          
+          stop_event = threading.Event()
+          monitor_thread = threading.Thread(target=monitor_usage, args=(3, stop_event, "T5 Training"))
+          monitor_thread.start()
      
           for epoch in range(start_epoch, num_epochs):
                print(f"--- T5 Fine-tune ---")
@@ -242,6 +244,9 @@ def fine_tune_t5(file_path, val_file_path, out_size, num_epochs = 20,
                          outputs = custom_t5_model(combin_embeddings_list = concat_embs_list, label_summaries=batch_summary)
                          loss = outputs.loss
                          scaled_loss  = loss / accumulate_step
+                         
+                         del sentence_embeddings, sent_text
+                         clean_memory()
                     
                     scaler.scale(scaled_loss).backward()
                     total_loss += loss.item()
@@ -253,11 +258,7 @@ def fine_tune_t5(file_path, val_file_path, out_size, num_epochs = 20,
                          scaler.update()
                          global_step += 1
                          scheduler.step()
-                         optimizer.zero_grad()
-                         
-                    ### for keeping connection
-                    if (batch_idx + 1) % 200 == 0:
-                         print(f"Training keeping alive. Processing {batch_idx}-th batch, learning rate: {scheduler.get_last_lr()[0]:.6f}")
+                         optimizer.zero_grad(set_to_none=True)
                          
                avg_train_loss = total_loss / processed_batches_this_epoch if processed_batches_this_epoch > 0 else 0
                train_losses.append(avg_train_loss)
@@ -330,6 +331,10 @@ def fine_tune_t5(file_path, val_file_path, out_size, num_epochs = 20,
           }, emergency_path)
           print(f"[Exception] Error!! Checkpoint has saved in {emergency_path}")
           raise e
+     
+     ## stop monitor
+     stop_event.set()
+     monitor_thread.join()
      
      best_checkpoint = ckpt_mgr.load_best(device=device)
      if best_checkpoint:
