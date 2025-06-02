@@ -8,7 +8,7 @@ import torch.nn.functional as F
 from torch_geometric.data import Batch
 from tqdm.auto import tqdm
 from torch.utils.data import DataLoader as data_DataLoader
-from transformers import T5Tokenizer, T5ForConditionalGeneration, T5Config, get_linear_schedule_with_warmup 
+from transformers import T5Tokenizer, T5ForConditionalGeneration, T5Config, get_linear_schedule_with_warmup, T5TokenizerFast
 
 from models.DatasetLoader import EvalDataset, custom_collate_fn
 from models.CustomT5 import CustomT5
@@ -21,11 +21,9 @@ from models.ModelFileManager import model_fm
 
 base_model = "google-t5/t5-base"
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-t5_tokenizer = T5Tokenizer.from_pretrained(base_model)
+t5_tokenizer = T5TokenizerFast.from_pretrained("t5-base")
 t5_model = T5ForConditionalGeneration.from_pretrained(base_model, use_cache=False).to(device)
 t5_model.gradient_checkpointing_enable()
-t5_model.eval()
-freeze_model(t5_model)
 
 def train_gnn_t5(dataset_path, hidden_size, out_size, num_heads=8, learning_rate=0.001, num_epochs=20, 
                feat_drop=0.1, attn_drop=0.1, gnn_batch_size=16, llm_batch_size=4, 
@@ -82,32 +80,24 @@ def train_gnn_t5(dataset_path, hidden_size, out_size, num_heads=8, learning_rate
      
      print("*** Two-stage training finish! ***")
 
-def get_combined_embed2(batch_graph_list, gnn_embeddings, sent_text, encoder):
+def get_combined_embed2(batch_graph_list, sentence_graph_embs, sentence_text_embs):
      concat_embedding_list = []
      start_ind = 0
      
-     ## cal sent level t5 emb
-     graph_sent_embs = []
-     for graph_sents in sent_text:
-          with torch.no_grad(), torch.cuda.amp.autocast():
-               sent_embs = encoder.encode_batch(graph_sents, batch_size=16)
-          
-          graph_sent_embs.append(sent_embs.detach().cpu())
-
      for i_th, graph in enumerate(batch_graph_list): # for each embs of graph
           graph_sent_num = graph['sentence'].x.shape[0]
-          gnn_sent_embs = gnn_embeddings[start_ind: start_ind + graph_sent_num]
+          gnn_sent_embs = sentence_graph_embs[start_ind: start_ind + graph_sent_num]
+          t5_sent_embs = sentence_text_embs[start_ind: start_ind + graph_sent_num]
           start_ind += graph_sent_num
           
           with torch.no_grad():
                gnn_norm = F.normalize(gnn_sent_embs, p=2, dim=-1)
-               t5_norm = F.normalize(graph_sent_embs[i_th].to(device), p=2, dim=-1)
+               t5_norm = F.normalize(t5_sent_embs, p=2, dim=-1)
                
                combined = torch.cat([gnn_norm, t5_norm], dim=-1)
                concat_embedding_list.append(combined)
           
           del gnn_norm, t5_norm
-          clean_memory()
      
      return concat_embedding_list
 
@@ -120,14 +110,16 @@ def fine_tune_t5(file_path, val_file_path, out_size, num_epochs = 20,
           train_dataset,
           batch_size=batch_size,
           shuffle=True,
-          num_workers=0,
+          num_workers=3,
+          pin_memory=True,
           collate_fn=custom_collate_fn
      )
 
      val_dataset = EvalDataset(file_path=val_file_path, dataset_type=DataType.VALIDATION.value, sent_similarity=sent_similarity_threshold)
      val_dataloader = data_DataLoader(
           val_dataset, batch_size=batch_size, shuffle=False, # No shuffle
-          num_workers=0,
+          num_workers=1,
+          pin_memory=True,
           collate_fn=custom_collate_fn
      )
      
@@ -234,20 +226,21 @@ def fine_tune_t5(file_path, val_file_path, out_size, num_epochs = 20,
                     batch_graph, batch_map, batch_summary = batch
                     batched_graph = Batch.from_data_list(batch_graph).to(device, non_blocking=True)
                     
+                    with torch.no_grad():
+                         sentence_graph_embs, _ = gnn_model(batched_graph)
+                         sentence_graph_embs = sentence_graph_embs.detach()
+                    
+                    sent_texts = batched_graph['sentence'].text
+                    sent_text_list = [sent for doc in sent_texts for sent in doc]
+                    sentence_text_embs = long_text_encoder.encode_batch(sent_text_list)
+                    
+                    concat_embs_list = get_combined_embed2(batch_graph, sentence_graph_embs, sentence_text_embs)
+                    
                     with torch.cuda.amp.autocast():
-                         sent_text = batched_graph['sentence'].text
-                         
-                         with torch.no_grad():
-                              sentence_embeddings, _ = gnn_model(batched_graph)
-                              sentence_embeddings = sentence_embeddings.detach()
-                         concat_embs_list = get_combined_embed2(batch_graph, sentence_embeddings, sent_text, long_text_encoder)
-                         
                          outputs = custom_t5_model(combin_embeddings_list = concat_embs_list, label_summaries=batch_summary)
                          loss = outputs.loss
                          scaled_loss  = loss / accumulate_step
-                         
-                         del sentence_embeddings, sent_text
-                    
+                                             
                     scaler.scale(scaled_loss).backward()
                     total_loss += loss.item()
                     processed_batches_this_epoch += 1
@@ -260,7 +253,7 @@ def fine_tune_t5(file_path, val_file_path, out_size, num_epochs = 20,
                          scheduler.step()
                          optimizer.zero_grad(set_to_none=True)
                          
-                    del outputs, concat_embs_list, batched_graph
+                    del batched_graph, sentence_graph_embs, sentence_text_embs, concat_embs_list, outputs
                     clean_memory()
                          
                avg_train_loss = total_loss / processed_batches_this_epoch if processed_batches_this_epoch > 0 else 0
@@ -272,24 +265,35 @@ def fine_tune_t5(file_path, val_file_path, out_size, num_epochs = 20,
                custom_t5_model.eval()
                total_val_loss = 0.0
                num_val_batches = 0
-               with torch.no_grad(), torch.cuda.amp.autocast():
+               with torch.no_grad():
                     for val_batch_id, val_batch in tqdm(enumerate(val_dataloader), total=len(val_dataloader), desc=f"{epoch + 1}-th Val Epoch"):
                          val_graph, val_map, val_summary = val_batch
                          batched_graph = Batch.from_data_list(val_graph).to(device, non_blocking=True)
                          
-                         sent_text = batched_graph['sentence'].text
-                         sentence_embeddings, _ = gnn_model(batched_graph)
-                         sentence_embeddings = sentence_embeddings.detach()
-                         concat_embs_list = get_combined_embed2(val_graph, sentence_embeddings, sent_text, long_text_encoder)
-                         
-                         outputs = custom_t5_model(combin_embeddings_list=concat_embs_list, label_summaries=val_summary)
-                         total_val_loss += outputs.loss.item()
-                         num_val_batches += 1
-               
+                         sentence_graph_embs, _ = gnn_model(batched_graph)
+                         sentence_graph_embs = sentence_graph_embs.detach()
+                         sent_texts = batched_graph['sentence'].text
+                         sent_text_list = [sent for doc in sent_texts for sent in doc]
+                         sentence_text_embs = long_text_encoder.encode_batch(sent_text_list)
+
+                         concat_embs_list = get_combined_embed2(
+                              val_graph,
+                              sentence_graph_embs,
+                              sentence_text_embs,
+                         )
+
+                         with torch.cuda.amp.autocast():
+                              outputs = custom_t5_model(combin_embeddings_list=concat_embs_list, label_summaries=val_summary)
+                              total_val_loss += outputs.loss.item()
+                              num_val_batches += 1
+
+                         del batched_graph, sentence_graph_embs, sentence_text_embs, concat_embs_list, outputs
+
                avg_val_loss = total_val_loss / num_val_batches if num_val_batches > 0 else 0
                val_losses.append(avg_val_loss)
                print(f"[Validation] Epoch {epoch+1}/{num_epochs}, Loss: {avg_val_loss:.4f}")
 
+               
                # --- Early Stopping Check ---
                models_to_save = {'custom_t5_model': custom_t5_model}
                optimizers_to_save = {'optimizer': optimizer}

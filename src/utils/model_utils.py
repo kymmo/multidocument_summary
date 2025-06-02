@@ -64,17 +64,17 @@ def merge_dicts(list_of_dicts):
 def print_gpu_memory(label):
      allocated = torch.cuda.memory_allocated() / 1024**3
      reserved = torch.cuda.memory_reserved() / 1024**3
-     print(f"[{label}] GPU allocated: {allocated:.2f} GB | preserved: {reserved:.2f} GB")
+     print(f"*[{label}] GPU allocated: {allocated:.2f} GB | preserved: {reserved:.2f} GB")
      
 def print_cpu_memory(label, interval = 1):
      memory = psutil.virtual_memory()
      cpu_percent = psutil.cpu_percent(interval=interval)  ## 1 sec interval
      
-     print(f"[{label}] CPU used: {cpu_percent}%. Memory used: {memory.percent}%. Memory Detail: {memory.used / (1024 ** 3):.2f} GB | remaining: {memory.available / (1024 ** 3):.2f} GB")
+     print(f"*[{label}] CPU used: {cpu_percent}%. Memory used: {memory.percent}%. Memory Detail: {memory.used / (1024 ** 3):.2f} GB | remaining: {memory.available / (1024 ** 3):.2f} GB")
 
-def monitor_usage(interval, stop_event, label):
+def monitor_usage(interval, stop_event, label, time_interval = 20):
      """Monitors CPU and memory usage."""
-     while not stop_event.wait(15 * 60): ## every 15 mins
+     while not stop_event.wait(time_interval * 60): ## time_interval based on mins
           print_cpu_memory(label, interval)
           print_gpu_memory(label)
           
