@@ -255,16 +255,19 @@ def fine_tune_t5(file_path, val_file_path, out_size, num_epochs = 20,
                          scheduler.step()
                          optimizer.zero_grad(set_to_none=True)
                          
-                         current_lrs = scheduler.get_last_lr()
-                         lr_strings = [f"{lr:.8f}" for lr in current_lrs]
-                         print(f"[Batch Update] Batch {batch_idx}, Global Step: {global_step}, Learning Rates: {lr_strings}")
+                         if global_step % 100 == 0:
+                              current_lrs = scheduler.get_last_lr()
+                              lr_strings = [f"{lr:.8f}" for lr in current_lrs]
+                              print(f"[Batch Update] Batch {batch_idx}, Global Step: {global_step}, Learning Rates: {lr_strings}")
      
                     del batched_graph, sentence_graph_embs, sentence_text_embs, concat_embs_list, outputs
                     clean_memory()
                          
                avg_train_loss = total_loss / processed_batches_this_epoch if processed_batches_this_epoch > 0 else 0
                train_losses.append(avg_train_loss)
-               print(f"[Training] Epoch {epoch+1} / {num_epochs}, Loss: {avg_train_loss:.4f}")
+               current_lrs = scheduler.get_last_lr()
+               lr_strings = [f"{lr:.8f}" for lr in current_lrs]
+               print(f"[Training] Epoch {epoch+1} / {num_epochs}, Loss: {avg_train_loss:.4f}, Learning Rates: {lr_strings}")
                
                # --- Validation for Early Stop ---
                print('--- T5 Validation ---')
