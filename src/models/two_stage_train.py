@@ -221,7 +221,7 @@ def fine_tune_t5(file_path, val_file_path, out_size, num_epochs = 20,
                skip_batches = accumulated_batches if resume and epoch == start_epoch else 0
                optimizer.zero_grad()
 
-               for batch_idx, batch in tqdm(enumerate(train_dataloader), total=len(train_dataloader), desc=f"{epoch + 1}-th Train Epoch"):
+               for batch_idx, batch in tqdm(enumerate(train_dataloader), total=len(train_dataloader), desc=f"{epoch}-th Train Epoch"):
                     if batch_idx < skip_batches:
                          continue
                     
@@ -270,7 +270,7 @@ def fine_tune_t5(file_path, val_file_path, out_size, num_epochs = 20,
                total_val_loss = 0.0
                num_val_batches = 0
                with torch.no_grad():
-                    for val_batch_id, val_batch in tqdm(enumerate(val_dataloader), total=len(val_dataloader), desc=f"{epoch + 1}-th Val Epoch"):
+                    for val_batch_id, val_batch in tqdm(enumerate(val_dataloader), total=len(val_dataloader), desc=f"{epoch}-th Val Epoch"):
                          val_graph, val_map, val_summary = val_batch
                          batched_graph = Batch.from_data_list(val_graph).to(device, non_blocking=True)
                          
