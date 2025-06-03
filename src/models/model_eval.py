@@ -2,7 +2,7 @@ import torch
 import time
 from torch_geometric.data import Batch
 from torch.utils.data import DataLoader as data_DataLoader
-from transformers import T5Tokenizer, T5ForConditionalGeneration
+from transformers import T5Tokenizer, T5ForConditionalGeneration, T5TokenizerFast
 
 from utils.model_utils import clean_memory, freeze_model
 from models.CustomT5 import CustomT5, reshape_embedding_to_tensors
@@ -15,7 +15,7 @@ from utils.model_utils import rouge_eval, merge_dicts
 
 base_model = "google-t5/t5-base"
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-t5_tokenizer = T5Tokenizer.from_pretrained(base_model)
+t5_tokenizer = T5TokenizerFast.from_pretrained("t5-base")
 t5_model = T5ForConditionalGeneration.from_pretrained(base_model, use_cache=False).to(device)
 t5_model.gradient_checkpointing_enable()
 
@@ -50,12 +50,16 @@ def eval_t5_summary(eval_data_path, max_summary_length, batch_size = 16, sent_si
                
                with torch.cuda.amp.autocast():
                     batched_graph = Batch.from_data_list(batch_graph).to(device, non_blocking=True)
-                    sent_text = batched_graph['sentence'].text
+                    with torch.no_grad():
+                         sentence_graph_embs, _ = gnn_model(batched_graph)
+                         sentence_graph_embs = sentence_graph_embs.detach()
                     
-                    sentence_embeddings, _ = gnn_model(batched_graph)
-                    sentence_embeddings = sentence_embeddings.detach()
-                    concat_embs = get_combined_embed2(batch_graph, sentence_embeddings, sent_text, long_text_encoder)
-                    summaries = generate_t5_summary(fine_tuned_t5, concat_embs, max_summary_length)
+                    sent_texts = batched_graph['sentence'].text
+                    sent_text_list = [sent for doc in sent_texts for sent in doc]
+                    sentence_text_embs = long_text_encoder.encode_batch(sent_text_list)
+                    
+                    concat_embs_list = get_combined_embed2(batch_graph, sentence_graph_embs, sentence_text_embs)
+                    summaries = generate_t5_summary(fine_tuned_t5, concat_embs_list, max_summary_length)
                     
                     batch_scores.append(rouge_eval(batch_summary, summaries))
      

@@ -8,7 +8,7 @@ import torch.nn.functional as F
 from torch_geometric.data import Batch
 from tqdm.auto import tqdm
 from torch.utils.data import DataLoader as data_DataLoader
-from transformers import T5Tokenizer, T5ForConditionalGeneration, T5Config, get_linear_schedule_with_warmup, T5TokenizerFast
+from transformers import T5Tokenizer, T5ForConditionalGeneration, T5Config, get_linear_schedule_with_warmup, T5TokenizerFast, get_cosine_schedule_with_warmup
 
 from models.DatasetLoader import EvalDataset, custom_collate_fn
 from models.CustomT5 import CustomT5
@@ -110,7 +110,7 @@ def fine_tune_t5(file_path, val_file_path, out_size, num_epochs = 20,
           train_dataset,
           batch_size=batch_size,
           shuffle=True,
-          num_workers=4,
+          num_workers=3,
           pin_memory=True,
           collate_fn=custom_collate_fn
      )
@@ -147,7 +147,7 @@ def fine_tune_t5(file_path, val_file_path, out_size, num_epochs = 20,
           learning_rates_dict = {
                "encoder_last2": 1e-4,
                "decoder_last2": 1e-4,
-               "projector": 1e-3
+               "projector": 1e-3,
           }
           
      optimizer = torch.optim.AdamW(
@@ -163,10 +163,12 @@ def fine_tune_t5(file_path, val_file_path, out_size, num_epochs = 20,
      max_train_steps = num_epochs * num_update_steps_per_epoch
      num_warmup_steps = int(max_train_steps * warmup_ratio)
      print(f"[Scheduler] Total training steps estimated: {max_train_steps}, Warmup steps: {num_warmup_steps}")
-     scheduler = get_linear_schedule_with_warmup(
+     scheduler = get_cosine_schedule_with_warmup(
           optimizer,
           num_warmup_steps=num_warmup_steps,
-          num_training_steps=max_train_steps
+          num_training_steps=max_train_steps,
+          num_cycles=0.5,
+          last_epoch=-1,
      )
      scaler = torch.cuda.amp.GradScaler(enabled=True)
 
@@ -222,7 +224,7 @@ def fine_tune_t5(file_path, val_file_path, out_size, num_epochs = 20,
                for batch_idx, batch in tqdm(enumerate(train_dataloader), total=len(train_dataloader), desc=f"{epoch + 1}-th Train Epoch"):
                     if batch_idx < skip_batches:
                          continue
-               
+                    
                     batch_graph, batch_map, batch_summary = batch
                     batched_graph = Batch.from_data_list(batch_graph).to(device, non_blocking=True)
                     
@@ -240,7 +242,7 @@ def fine_tune_t5(file_path, val_file_path, out_size, num_epochs = 20,
                          outputs = custom_t5_model(combin_embeddings_list = concat_embs_list, label_summaries=batch_summary)
                          loss = outputs.loss
                          scaled_loss  = loss / accumulate_step
-                                             
+                    
                     scaler.scale(scaled_loss).backward()
                     total_loss += loss.item()
                     processed_batches_this_epoch += 1
@@ -253,12 +255,14 @@ def fine_tune_t5(file_path, val_file_path, out_size, num_epochs = 20,
                          scheduler.step()
                          optimizer.zero_grad(set_to_none=True)
                          
+                         print(f"[Batch Update] Step {global_step}, Learning Rate: {scheduler.get_last_lr()[0]:.6f}")
+                         
                     del batched_graph, sentence_graph_embs, sentence_text_embs, concat_embs_list, outputs
                     clean_memory()
                          
                avg_train_loss = total_loss / processed_batches_this_epoch if processed_batches_this_epoch > 0 else 0
                train_losses.append(avg_train_loss)
-               print(f"[Training] Epoch {epoch+1} / {num_epochs}, Loss: {avg_train_loss:.4f}, Learning Rate: {scheduler.get_last_lr()[0]:.6f}")
+               print(f"[Training] Epoch {epoch+1} / {num_epochs}, Loss: {avg_train_loss:.4f}")
                
                # --- Validation for Early Stop ---
                print('--- T5 Validation ---')
@@ -288,6 +292,7 @@ def fine_tune_t5(file_path, val_file_path, out_size, num_epochs = 20,
                               num_val_batches += 1
 
                          del batched_graph, sentence_graph_embs, sentence_text_embs, concat_embs_list, outputs
+                         clean_memory()
 
                avg_val_loss = total_val_loss / num_val_batches if num_val_batches > 0 else 0
                val_losses.append(avg_val_loss)

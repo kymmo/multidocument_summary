@@ -12,6 +12,16 @@ class LongTextEncoder:
           # overlap = chunk_size - stride
 
      def encode_batch(self, texts: list[str], max_subbatch_chunks: int = 200) -> torch.Tensor:
+          # processed_texts = []
+          # for x in texts:
+          #      if isinstance(x, list):
+          #           processed_texts.append(" ".join(x))
+          #      elif isinstance(x, str):
+          #           processed_texts.append(x)
+          #      else:
+          #           raise AttributeError("[LongTextEncoder] texts element should be str.")
+          # texts = processed_texts
+          
           encoding = self.tokenizer(
                texts,
                max_length=self.chunk_size,
