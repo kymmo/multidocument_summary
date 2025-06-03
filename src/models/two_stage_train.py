@@ -255,8 +255,10 @@ def fine_tune_t5(file_path, val_file_path, out_size, num_epochs = 20,
                          scheduler.step()
                          optimizer.zero_grad(set_to_none=True)
                          
-                         print(f"[Batch Update] Step {global_step}, Learning Rate: {scheduler.get_last_lr()[0]:.6f}")
-                         
+                         current_lrs = scheduler.get_last_lr()
+                         lr_strings = [f"{lr:.8f}" for lr in current_lrs]
+                         print(f"[Batch Update] Batch {batch_idx}, Global Step: {global_step}, Learning Rates: {lr_strings}")
+     
                     del batched_graph, sentence_graph_embs, sentence_text_embs, concat_embs_list, outputs
                     clean_memory()
                          
