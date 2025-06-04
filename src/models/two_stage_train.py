@@ -110,7 +110,7 @@ def fine_tune_t5(file_path, val_file_path, out_size, num_epochs = 20,
           train_dataset,
           batch_size=batch_size,
           shuffle=True,
-          num_workers=3,
+          num_workers=1,
           pin_memory=True,
           collate_fn=custom_collate_fn
      )

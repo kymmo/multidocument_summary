@@ -42,32 +42,36 @@ def eval_t5_summary(eval_data_path, max_summary_length, batch_size = 16, sent_si
      long_text_encoder = LongTextEncoder(t5_tokenizer, t5_model)
      
      print("Start evaluation...")
-     eval_start_time = time.time()
-     batch_scores = []
-     with torch.no_grad():
-          for batch in eval_dataloader:
-               batch_graph, batch_map, batch_summary = batch
-               
-               with torch.cuda.amp.autocast():
-                    batched_graph = Batch.from_data_list(batch_graph).to(device, non_blocking=True)
-                    with torch.no_grad():
-                         sentence_graph_embs, _ = gnn_model(batched_graph)
-                         sentence_graph_embs = sentence_graph_embs.detach()
+     try: 
+          eval_start_time = time.time()
+          batch_scores = []
+          with torch.no_grad():
+               for batch in eval_dataloader:
+                    batch_graph, batch_map, batch_summary = batch
                     
-                    sent_texts = batched_graph['sentence'].text
-                    sent_text_list = [sent for doc in sent_texts for sent in doc]
-                    sentence_text_embs = long_text_encoder.encode_batch(sent_text_list)
-                    
-                    concat_embs_list = get_combined_embed2(batch_graph, sentence_graph_embs, sentence_text_embs)
-                    summaries = generate_t5_summary(fine_tuned_t5, concat_embs_list, max_summary_length)
-                    
-                    batch_scores.append(rouge_eval(batch_summary, summaries))
+                    with torch.cuda.amp.autocast():
+                         batched_graph = Batch.from_data_list(batch_graph).to(device, non_blocking=True)
+                         with torch.no_grad():
+                              sentence_graph_embs, _ = gnn_model(batched_graph)
+                              sentence_graph_embs = sentence_graph_embs.detach()
+                         
+                         sent_texts = batched_graph['sentence'].text
+                         sent_text_list = [sent for doc in sent_texts for sent in doc]
+                         sentence_text_embs = long_text_encoder.encode_batch(sent_text_list)
+                         
+                         concat_embs_list = get_combined_embed2(batch_graph, sentence_graph_embs, sentence_text_embs)
+                         summaries = generate_t5_summary(fine_tuned_t5, concat_embs_list, max_summary_length)
+                         
+                         batch_scores.append(rouge_eval(batch_summary, summaries))
+          
+          # get average scores
+          scores_list = [obj for batch_score in batch_scores for obj in batch_score]
+          avg = merge_dicts(scores_list)
+          eval_end_time = time.time()
+          print(f"Finish evaluation, time cost:  {eval_end_time - eval_start_time:.4f} s.")
      
-     # get average scores
-     scores_list = [obj for batch_score in batch_scores for obj in batch_score]
-     avg = merge_dicts(scores_list)
-     eval_end_time = time.time()
-     print(f"Finish evaluation, time cost:  {eval_end_time - eval_start_time:.4f} s.")
+     except Exception as e:
+          raise e
      
      return avg
 
