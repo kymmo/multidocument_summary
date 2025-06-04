@@ -110,7 +110,7 @@ def fine_tune_t5(file_path, val_file_path, out_size, num_epochs = 20,
           train_dataset,
           batch_size=batch_size,
           shuffle=True,
-          num_workers=1,
+          num_workers=0,
           pin_memory=True,
           collate_fn=custom_collate_fn
      )
@@ -118,7 +118,7 @@ def fine_tune_t5(file_path, val_file_path, out_size, num_epochs = 20,
      val_dataset = EvalDataset(file_path=val_file_path, dataset_type=DataType.VALIDATION.value, sent_similarity=sent_similarity_threshold)
      val_dataloader = data_DataLoader(
           val_dataset, batch_size=batch_size, shuffle=False, # No shuffle
-          num_workers=1,
+          num_workers=0,
           pin_memory=True,
           collate_fn=custom_collate_fn
      )
