@@ -7,6 +7,7 @@ from torch_geometric.loader import DataLoader as geo_DataLoader
 from pytorch_metric_learning import losses
 import traceback
 from collections import deque
+from transformers import get_cosine_schedule_with_warmup
 
 from models.RelHetGraph import RelHetGraph, EdgeKeyTuple
 from models.DatasetLoader import OptimizedDataset
@@ -17,7 +18,7 @@ from utils.model_utils import freeze_model, clean_memory, print_gpu_memory, prin
 
 def train_gnn(file_path, hidden_size, out_size, num_heads, val_file_path, sentence_in_size = 768, word_in_size = 768, projection_dim = 768,
                learning_rate=0.001, num_epochs=20, feat_drop=0.2, attn_drop=0.2, batch_size=32, save_method='entire_model', patience=5, sent_similarity_threshold = 0.6,
-               gnn_accumulation_steps = 4,
+               gnn_accumulation_steps = 4, warmup_ratio = 0.1,
                device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')):
 
      clean_memory()
@@ -50,8 +51,17 @@ def train_gnn(file_path, hidden_size, out_size, num_heads, val_file_path, senten
           document_in_size=sentence_in_size, ## avg of sent embs
           feat_drop=feat_drop, attn_drop=attn_drop).to(device)
      optimizer = torch.optim.Adam(gnn_model.parameters(), lr=learning_rate)
-     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-          optimizer, mode='min', factor=0.7, patience=3, cooldown=0, min_lr=1e-6
+     
+     num_update_steps_per_epoch = math.ceil(len(train_dataloader) / gnn_accumulation_steps)
+     max_train_steps = num_epochs * num_update_steps_per_epoch
+     num_warmup_steps = int(max_train_steps * warmup_ratio)
+     print(f"[Scheduler] Total training steps estimated: {max_train_steps}, Warmup steps: {num_warmup_steps}")
+     scheduler = get_cosine_schedule_with_warmup(
+          optimizer,
+          num_warmup_steps=num_warmup_steps,
+          num_training_steps=max_train_steps,
+          num_cycles=0.5,
+          last_epoch=-1,
      )
      scaler = torch.cuda.amp.GradScaler()
 
@@ -106,7 +116,9 @@ def train_gnn(file_path, hidden_size, out_size, num_heads, val_file_path, senten
                          loss = compute_contractive_learning_loss(
                               projected_sentence_embeddings=projected_sent_embeddings,
                               graph=batch,
-                              positive_edge_keys=s2s_keys)
+                              positive_edge_keys=s2s_keys,
+                              temperature = 0.1,
+                         )
                     
                          if loss is None:
                               train_empty_batch_cnt += 1
@@ -152,7 +164,9 @@ def train_gnn(file_path, hidden_size, out_size, num_heads, val_file_path, senten
                               val_loss = compute_contractive_learning_loss(
                                    projected_sentence_embeddings=projected_sent_embeddings,
                                    graph=batch,
-                                   positive_edge_keys=s2s_keys)
+                                   positive_edge_keys=s2s_keys,
+                                   temperature = 0.1,
+                              )
                          
                               if val_loss is None:
                                    val_empty_batch_cnt += 1
@@ -357,62 +371,3 @@ def compute_contractive_learning_loss(
           return torch.tensor(0.0, device=device, requires_grad=False)
 
      return loss
-
-def get_masked_graph(pyg_graph, k = 2):
-     """mask the original graph for link prediction training for GNN model.
-     Args:
-          pyg_graph (torch_geometric.data.Data): The original graph.
-          k (int): The number of negative edges to generate for each positive edge.
-     """
-     masked_graph = pyg_graph.clone()
-     MIN_POSITIVE_LINKS_THRESHOLD = 3
-
-     # --- 1. produce positive and negative edge pairs ---
-     pos_ind = None
-     if ('sentence', 'similarity', 'sentence') in masked_graph.edge_types:
-          pos_ind = masked_graph['sentence', 'similarity', 'sentence'].edge_index
-     else:
-          print("No positive similarity pairs found in the batch.")
-          return None
-     
-     pos_pairs = set()
-     for i in range(pos_ind.size(1)):
-          from_node = pos_ind[0][i].item()
-          to_node = pos_ind[1][i].item()
-          to_add = (from_node, to_node) if from_node < to_node else (to_node, from_node) ## remove bidirection
-          pos_pairs.add(to_add)
-     
-     if pos_pairs is None or len(pos_pairs) == 0:
-          print("No positive similarity pairs found in the batch.")
-          return None
-     
-     if len(pos_pairs) < MIN_POSITIVE_LINKS_THRESHOLD:
-          print("Not enough positive similarity pairs found in the graph.")
-          return None
-     
-     neg_pairs = set()
-     sent_num = masked_graph['sentence'].x.size(0)
-     max_neg_pairs = min(len(pos_pairs) * k, (math.comb(sent_num, 2) - len(pos_pairs)))
-     while len(neg_pairs) < max_neg_pairs:
-          node1 = random.randint(0, sent_num - 1)
-          node2 = random.randint(0, sent_num - 1)
-          if node1 == node2:
-               continue
-          
-          to_add = (node1, node2) if node1 < node2 else (node2, node1)
-          if to_add not in pos_pairs:
-               neg_pairs.add(to_add)
-     
-     if neg_pairs is None or len(neg_pairs) == 0:
-          raise ValueError("No negative similarity pairs found in the graph.")
-     
-     pos_pairs = list(map(list, pos_pairs))
-     neg_pairs = list(map(list, neg_pairs))
-     masked_graph[('sentence', 'pos_sim_edge', 'sentence')].edge_index = torch.tensor(pos_pairs, dtype=int).t()
-     masked_graph[('sentence', 'neg_sim_edge', 'sentence')].edge_index = torch.tensor(neg_pairs, dtype=int).t()
-     
-     # --- 2. remove similarity edge ---
-     if ('sentence', 'similarity', 'sentence') in masked_graph.edge_types:
-          del masked_graph['sentence', 'similarity', 'sentence']
-     
-     return masked_graph

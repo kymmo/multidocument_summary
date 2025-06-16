@@ -9,7 +9,6 @@ class LongTextEncoder:
           self.model.eval()
           self.chunk_size = chunk_size
           self.stride = int(chunk_size * (1 - overlap_percent))
-          # overlap = chunk_size - stride
 
      def encode_batch(self, texts: list[str], max_subbatch_chunks: int = 200) -> torch.Tensor:
           if isinstance(texts, list) and len(texts) > 0:

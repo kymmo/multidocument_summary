@@ -85,9 +85,9 @@ class RelHetGraph(nn.Module):
           sentence_embeddings_projected = None # for contrastive
 
           if sentence_output_h2 is not None:
-               # sentence_embeddings_gnn = F.relu(sentence_output_h2)
+               # sentence_embeddings_gnn = sentence_output_h2
+               sentence_embeddings_gnn = F.relu(sentence_output_h2)
                # sentence_embeddings_gnn = self.feat_drop(sentence_embeddings_gnn)
-               sentence_embeddings_gnn = sentence_output_h2
                
                if need_projection:
                     sentence_embeddings_projected = self.projection_head_sentence(sentence_output_h2)

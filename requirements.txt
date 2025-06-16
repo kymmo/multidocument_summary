@@ -21,8 +21,12 @@ async-timeout==5.0.1
     # via aiohttp
 attrs==24.3.0
     # via aiohttp
+bert-score==0.3.13
+    # via -r requirements.in
 blis==0.7.11
     # via thinc
+bm25s==0.2.13
+    # via -r requirements.in
 catalogue==2.0.10
     # via
     #   spacy
@@ -119,7 +123,9 @@ markdown-it-py==3.0.0
 markupsafe==3.0.2
     # via jinja2
 matplotlib==3.9.4
-    # via -r requirements.in
+    # via
+    #   -r requirements.in
+    #   bert-score
 mdurl==0.1.2
     # via markdown-it-py
 mkl==2021.4.0
@@ -144,7 +150,9 @@ nltk==3.9.1
 numpy==1.26.4
     # via
     #   accelerate
+    #   bert-score
     #   blis
+    #   bm25s
     #   contourpy
     #   datasets
     #   hdbscan
@@ -164,6 +172,7 @@ nvidia-ml-py==12.575.51
 packaging==24.2
     # via
     #   accelerate
+    #   bert-score
     #   datasets
     #   huggingface-hub
     #   matplotlib
@@ -171,7 +180,9 @@ packaging==24.2
     #   thinc
     #   transformers
 pandas==2.2.3
-    # via datasets
+    # via
+    #   bert-score
+    #   datasets
 pathlib-abc==0.1.1
     # via pathy
 pathy==0.11.0
@@ -188,7 +199,7 @@ propcache==0.2.1
     # via
     #   aiohttp
     #   yarl
-protobuf==5.29.3
+protobuf==3.20.1
     # via -r requirements.in
 psutil==6.1.1
     # via
@@ -210,6 +221,8 @@ pyparsing==3.2.1
     # via
     #   matplotlib
     #   torch-geometric
+pystemmer==3.0.0
+    # via -r requirements.in
 python-dateutil==2.9.0.post0
     # via
     #   matplotlib
@@ -230,6 +243,7 @@ regex==2024.11.6
     #   transformers
 requests==2.32.3
     # via
+    #   bert-score
     #   datasets
     #   huggingface-hub
     #   spacy
@@ -251,6 +265,7 @@ scikit-learn==1.6.1
     #   sentence-transformers
 scipy==1.13.1
     # via
+    #   bm25s
     #   hdbscan
     #   scikit-learn
     #   sentence-transformers
@@ -294,12 +309,14 @@ tokenizers==0.21.0
 torch==2.3.0
     # via
     #   accelerate
+    #   bert-score
     #   pytorch-metric-learning
     #   sentence-transformers
 torch-geometric==2.6.1
     # via -r requirements.in
 tqdm==4.67.1
     # via
+    #   bert-score
     #   datasets
     #   huggingface-hub
     #   nltk
@@ -311,6 +328,7 @@ tqdm==4.67.1
 transformers==4.48.0
     # via
     #   -r requirements.in
+    #   bert-score
     #   sentence-transformers
 typer==0.7.0
     # via

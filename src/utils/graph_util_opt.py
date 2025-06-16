@@ -618,7 +618,7 @@ def get_embedded_pyg_graphs(dataset_type, docs_list, sent_similarity):
      num_workers = auto_workers()
      TASK_PREFIX = '[Create Graph]'
      
-     print(f"Using {num_workers} workers to process {len(docs_list)} samples.")
+     print(f"Using {num_workers} workers to process {len(docs_list)} samples in {dataset_type} dataset.")
      
      try:
           mp.set_sharing_strategy('file_system')

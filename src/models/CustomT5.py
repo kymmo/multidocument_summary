@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from transformers import T5Tokenizer, T5ForConditionalGeneration, T5Config, AutoTokenizer
 
 base_model = "google-t5/t5-base"
@@ -17,13 +18,13 @@ class CustomT5(T5ForConditionalGeneration):
           if not hasattr(custom_config, 'projector_input_size'):
                raise ValueError("CustomT5 requires 'projector_input_size' in config.")
 
-          hidden_size = 2048
+          hidden_size = max(1024, self.config.d_model * 2)
           self.projector = nn.Sequential(
                nn.Linear(custom_config.projector_input_size, hidden_size),
+               nn.GELU(),
                nn.LayerNorm(hidden_size),
-               nn.ReLU(),
                nn.Linear(hidden_size, self.config.d_model),
-               nn.Dropout(0.1)
+               nn.Tanh(),
           )
           
           self._freeze_parameters()
@@ -37,12 +38,11 @@ class CustomT5(T5ForConditionalGeneration):
                param.requires_grad = True
                
           # unfreeze to learn
-          ## fine-tune the last two layers of encoder and decoder
-          for layer in self.encoder.block[-2:]:
+          for layer in self.encoder.block[-4:]:
                for param in layer.parameters():
                     param.requires_grad = True
                     
-          for layer in self.decoder.block[-2:]:
+          for layer in self.decoder.block[-4:]:
                for param in layer.parameters():
                     param.requires_grad = True
 
@@ -71,26 +71,33 @@ class CustomT5(T5ForConditionalGeneration):
           )
           
      
-def reshape_embedding_to_tensors(combin_embeddings_list):
+def reshape_embedding_to_tensors(combin_embeddings_list, max_len = 512):
      processed_embeddings_list = [emb.to(device) for emb in combin_embeddings_list]
      
      reshape_list = [] ##[tensor(1, sequence_size, embed_size)]
      masks = [] ## (batch_size, sequence_size)
      
-     max_node_num = max(graph_embs.shape[0] for graph_embs in processed_embeddings_list) ## TODO: may be longer than 512
+     max_node_num = max(graph_embs.shape[0] for graph_embs in processed_embeddings_list)
+     max_node_num = min(max_len, max_node_num)
      for graph_embs in processed_embeddings_list:
           cur_len = graph_embs.shape[0]
+          
           padding_size = max_node_num - cur_len
           if padding_size > 0:
                graph_embs = torch.cat([
                     graph_embs,
                     torch.zeros(padding_size, graph_embs.shape[1], device=device)
                ], dim=0)
-          
+          elif padding_size < 0:
+               embs_unsqueezed = graph_embs.unsqueeze(0)
+               pooled_embs = F.adaptive_avg_pool1d(embs_unsqueezed.transpose(1, 2), max_len)
+               graph_embs = pooled_embs.transpose(1, 2).squeeze(0)
+               
           reshape_list.append(graph_embs)
           
           mask = torch.zeros(max_node_num, device=device)
-          mask[:cur_len] = 1
+          mask_len = cur_len if cur_len <= max_len else max_len
+          mask[:mask_len] = 1
           masks.append(mask)
           
      return torch.stack(reshape_list), torch.stack(masks)

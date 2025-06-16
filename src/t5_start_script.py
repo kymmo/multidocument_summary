@@ -83,14 +83,14 @@ def run():
                          help='Hidden layer size of gnn model.')
      
      ## T5 learning rate dict
-     parser.add_argument('--t5-lr-encoder-last2',
+     parser.add_argument('--t5-lr-shallow-layers',
                          type=float,
                          default=1e-4,
-                         help='Learning rate for last 2 encoder blocks of T5.')
-     parser.add_argument('--t5-lr-decoder-last2',
+                         help='Learning rate for last 2 encoder/decoder blocks of T5.')
+     parser.add_argument('--t5-lr-deep-layers',
                          type=float,
-                         default=1e-4,
-                         help='Learning rate for last 2 decoder blocks of T5.')
+                         default=1e-5,
+                         help='Learning rate for last 3/4 encoder/decoder blocks of T5.')
      parser.add_argument('--t5-lr-projector',
                          type=float,
                          default=1e-3,
@@ -105,8 +105,8 @@ def run():
      args = parser.parse_args()
      
      t5_learning_rates_dict_from_args = {
-          "encoder_last2": args.t5_lr_encoder_last2,
-          "decoder_last2": args.t5_lr_decoder_last2,
+          "shallow_layers": args.t5_lr_shallow_layers,
+          "deep_layers": args.t5_lr_deep_layers,
           "projector": args.t5_lr_projector
      }
      
@@ -123,11 +123,11 @@ def run():
      print(f"GNN Num Heads:               {args.num_heads}")
      print(f"GNN Hidden Size:             {args.gnn_hidden_size}")
      print(f"GNN Accumulation Step:       {args.gnn_accumulation_steps}")
-     print(f"T5 Encoder LR (Last 2):      {args.t5_lr_encoder_last2}")
-     print(f"T5 Decoder LR (Last 2):      {args.t5_lr_decoder_last2}")
+     print(f"T5 Shallow LR (Last 2):      {args.t5_lr_shallow_layers}")
+     print(f"T5 Deep LR (Deeper than 2):  {args.t5_lr_deep_layers}")
      print(f"T5 Projector LR:             {args.t5_lr_projector}")
      print(f"Scheduler Warmup Ratio:      {args.warmup_ratio}")
-     print("-" * 20)
+     print("-" * 33)
      
      try:
           scores = model_train_eval(
@@ -148,7 +148,9 @@ def run():
           )
 
           print("\n--- Evaluation Complete ---")
-          print(f"Evaluated ROUGE scores: \n {scores}")
+          print(f"Evaluated Scores:")
+          for name, score in scores.items():
+               print(f"{name}: {score}")
 
      except Exception as e:
           print(f"[ERROR] Error during model_train_eval: {e}")
