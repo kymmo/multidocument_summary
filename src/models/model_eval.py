@@ -101,7 +101,7 @@ def generate_t5_summary(fine_tuned_t5, combin_embeddings_list, max_summary_lengt
                "early_stopping": True,
                "repetition_penalty": 2.0,
                "no_repeat_ngram_size": 3,
-               "length_penalty": 0.8,
+               "length_penalty": 1.2,
                "do_sample": False,
                "num_beams": 4,
                "diversity_penalty": 0.7,

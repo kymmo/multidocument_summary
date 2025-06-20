@@ -10,7 +10,7 @@ logging.getLogger('bm25s').setLevel(logging.WARNING)
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 class InforMetricsCalculator:
-     def __init__(self, TOP_K = 5, BM25_SCORE_MIN = 0.2, ENTAIL_THRESHOLD = 0):
+     def __init__(self, TOP_K=5, BM25_SCORE_MIN=0.1, ENTAIL_THRESHOLD=0.9):
           self.stemmer = Stemmer("english")
           self.nlp = spacy.load("en_core_web_lg")
           self.sw = self.nlp.Defaults.stop_words
@@ -77,13 +77,14 @@ class InforMetricsCalculator:
           hallucination, strong_hallucination = self._calculate_hallucination(gen_ent)
           omission = self._calculate_omission(gen_summary_sents, ref_summary_sents)
           faithfulness = self._calculate_faithfulness(gen_ent)
+          contradiction_rate = sum(1 for p in gen_contra if p > 0.5) / len(gen_contra) if gen_contra else 0.0
           
           return {
                "hallucination": round(hallucination, 4),
                "strong_hallucination": round(strong_hallucination, 4),
                "faithfulness": round(faithfulness, 4),
                "omission": round(omission, 4),
-               "contradiction": round(sum(gen_contra)/len(gen_contra), 4) if gen_contra else 0.0
+               "contradiction": round(contradiction_rate, 4)
           }
           
      def _retrieve_and_nli(self, retriever, hypotheses):
@@ -109,25 +110,15 @@ class InforMetricsCalculator:
                     max_contradiction_probs.append(0.0)
                     continue
                
-               if len(premise_list) > 1:
-                    combined_premise = " ".join(premise_list)
-                    enc = self.tokenizer(
-                         combined_premise,
-                         hypo,
-                         return_tensors="pt",
-                         truncation=True,
-                         padding=True,
-                         max_length=512,
-                    ).to(device)
-               else:
-                    enc = self.tokenizer(
-                         premise_list,
-                         [hypo] * len(premise_list),
-                         return_tensors="pt",
-                         truncation=True,
-                         padding=True,
-                         max_length=512,
-                    ).to(device)
+               enc = self.tokenizer(
+                    premise_list,
+                    [hypo] * len(premise_list),
+                    return_tensors="pt",
+                    truncation=True,
+                    padding=True,
+                    max_length=512,
+                    return_attention_mask=True,
+               ).to(device)
                
                with torch.no_grad():
                     logits = self.model(**enc).logits
@@ -137,7 +128,7 @@ class InforMetricsCalculator:
                max_contradiction_probs.append(probs[:, 0].max().item())  # contradiction
           
           return max_entail_probs, max_contradiction_probs
-
+               
      def _calculate_faithfulness(self, gen_ent):
           if not gen_ent:
                return 0.0
@@ -154,13 +145,9 @@ class InforMetricsCalculator:
           gen_full_text = " ".join(gen_summary_sents)
           
           for ref_sent in ref_summary_sents:
-               if ref_sent in gen_full_text:
-                    omission_scores.append(0.0)
-                    continue
-                    
                inputs = self.tokenizer(
-                    ref_sent,
                     gen_full_text,
+                    ref_sent,
                     return_tensors="pt",
                     truncation=True,
                     max_length=512,

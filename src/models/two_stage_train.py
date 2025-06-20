@@ -215,6 +215,7 @@ def fine_tune_t5(file_path, val_file_path, out_size, num_epochs = 20,
           raise RuntimeError(f"Error loading GNN model: {e}")
      
      config = T5Config.from_pretrained(base_model)
+     config.dropout_rate = 0.05
      config.projector_input_size = out_size + t5_model.config.hidden_size + 30 # concated emb size + doc_emb_size
      config.torch_dtype = torch.float16
      config.gradient_checkpointing = True
@@ -259,7 +260,7 @@ def fine_tune_t5(file_path, val_file_path, out_size, num_epochs = 20,
           optimizer,
           num_warmup_steps=num_warmup_steps,
           num_training_steps=max_train_steps,
-          num_cycles=0.5,
+          num_cycles=1.0,
           last_epoch=-1,
      )
      scaler = torch.cuda.amp.GradScaler(enabled=True)
