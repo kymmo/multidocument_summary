@@ -1,5 +1,8 @@
 import torch
 import time
+import os
+import random
+import csv
 from bert_score import score
 from torch_geometric.data import Batch
 from torch.utils.data import DataLoader as data_DataLoader
@@ -76,6 +79,31 @@ def eval_t5_summary(eval_data_path, max_summary_length, batch_size = 16, sent_si
           bert_score = get_bert_score(generated_refer_summary_pair_list=generated_refer_summary_pair_list)
           infor_score = get_infor_score(original_sents_list, generated_refer_summary_pair_list)
           print(f"Finish Evaluation, time cost:  {time.time() - eval_start_time:.4f} s.")
+          
+          
+          # Save generated summary for human check
+          summary_saved_path = os.path.join("/","content", "drive", "MyDrive", "saved_summary_sample")
+          os.makedirs(summary_saved_path, exist_ok=True)
+          
+          sample_num = 30
+          ref_sums = []
+          gen_sums = []
+          for ref_summary, gen_summary in generated_refer_summary_pair_list:
+               ref_sums.extend(ref_summary)
+               gen_sums.extend(gen_summary)
+          
+          sample_idxs = random.sample(range(len(ref_sums)), min(sample_num, len(ref_sums)))
+          ref_sample_sums = [ref_sums[idx] for idx in sample_idxs]
+          gen_sample_sums = [gen_sums[idx] for idx in sample_idxs]
+          
+          with open(os.path.join(summary_saved_path, "summary_check_file.csv"), "w", encoding="utf-8", newline="") as csvfile:
+               writer = csv.writer(csvfile)
+               writer.writerow(["Index", "Reference Summary", "Generated Summary"])
+               
+               for i, (ref, gen) in enumerate(zip(ref_sample_sums, gen_sample_sums)):
+                    writer.writerow([i, ref.replace("\n", " "), gen.replace("\n", " ")])
+          
+          print(f"The sample summary file has saved in {summary_saved_path}")
 
      except Exception as e:
           raise e
@@ -147,7 +175,7 @@ def get_bert_score(generated_refer_summary_pair_list):
      return round(average_f1_score, 4)
 
 def get_infor_score(original_sents_list, generated_refer_summary_pair_list):
-     infor_metrics_cal = InforMetricsCalculator()
+     infor_metrics_cal = InforMetricsCalculator(TOP_K=6, BM25_SCORE_MIN=0.1, ENTAIL_THRESHOLD=0.75, WEAK_HALLU_MIN = 0.25, WEAK_HALLU_MAX = 0.65)
      hallucination_rates = []
      faithfulness_scores = []
      omission_rates = []

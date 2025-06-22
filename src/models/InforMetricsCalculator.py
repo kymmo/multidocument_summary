@@ -10,17 +10,21 @@ logging.getLogger('bm25s').setLevel(logging.WARNING)
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 class InforMetricsCalculator:
-     def __init__(self, TOP_K=5, BM25_SCORE_MIN=0.1, ENTAIL_THRESHOLD=0.9):
+     def __init__(self, TOP_K=5, BM25_SCORE_MIN=0.1, ENTAIL_THRESHOLD=0.75, WEAK_HALLU_MIN = 0.25, WEAK_HALLU_MAX = 0.65):
           self.stemmer = Stemmer("english")
           self.nlp = spacy.load("en_core_web_lg")
           self.sw = self.nlp.Defaults.stop_words
-          self.tokenizer = AutoTokenizer.from_pretrained("roberta-large-mnli")
-          self.model = AutoModelForSequenceClassification.from_pretrained("roberta-large-mnli").eval()
+          self.tokenizer = AutoTokenizer.from_pretrained("microsoft/deberta-v2-xlarge")
+          self.model = AutoModelForSequenceClassification.from_pretrained(
+               "microsoft/deberta-v2-xlarge-mnli"
+          ).eval()
           self.model.to(device)
           
           self.TOP_K = TOP_K
           self.BM25_SCORE_MIN = BM25_SCORE_MIN
           self.ENTAIL_THRESHOLD = ENTAIL_THRESHOLD
+          self.WEAK_HALLU_MIN = WEAK_HALLU_MIN
+          self.WEAK_HALLU_MAX = WEAK_HALLU_MAX
 
      def _get_infor_metrics(self, doc_list, gen_summary_list, ref_summary_list, BATCH_SIZE = 3):
           """
@@ -64,13 +68,17 @@ class InforMetricsCalculator:
      def _get_doc_metrics(self, doc_sent_list, gen_summary_sents, ref_summary_sents):
           """parameters should be plain sentence string list. no nest list.
           """
+          cleaned_doc_sents = [
+               sent for sent in doc_sent_list
+               if sent.strip() and len(sent.split()) > 2
+          ]
           corpus_tokens = bm25s.tokenize(
-               doc_sent_list,
+               cleaned_doc_sents,
                stopwords=self.sw,
                stemmer=self.stemmer
           )
 
-          retriever = bm25s.BM25(corpus=doc_sent_list)
+          retriever = bm25s.BM25(corpus=cleaned_doc_sents)
           retriever.index(corpus_tokens)
           
           gen_ent, gen_contra = self._retrieve_and_nli(retriever, gen_summary_sents)
@@ -94,7 +102,7 @@ class InforMetricsCalculator:
                stopwords=self.sw,
                stemmer=self.stemmer
           )
-          results, scores = retriever.retrieve(q_tokens, k=min(self.TOP_K, len(q_tokens)))
+          results, scores = retriever.retrieve(q_tokens, k=min(self.TOP_K, len(retriever.corpus)))
           
           max_entail_probs = []
           max_contradiction_probs = []
@@ -118,7 +126,8 @@ class InforMetricsCalculator:
                     padding=True,
                     max_length=512,
                     return_attention_mask=True,
-               ).to(device)
+               )
+               enc = {k: v.to(device) for k, v in enc.items()}
                
                with torch.no_grad():
                     logits = self.model(**enc).logits
@@ -137,40 +146,97 @@ class InforMetricsCalculator:
           
           return base_faithfulness
      
-     def _calculate_omission(self, gen_summary_sents, ref_summary_sents):
-          if not ref_summary_sents:
-               return 1.0
-               
-          omission_scores = []
-          gen_full_text = " ".join(gen_summary_sents)
-          
-          for ref_sent in ref_summary_sents:
-               inputs = self.tokenizer(
-                    gen_full_text,
-                    ref_sent,
-                    return_tensors="pt",
-                    truncation=True,
-                    max_length=512,
-                    padding=True
-               ).to(device)
-               
-               with torch.no_grad():
-                    outputs = self.model(**inputs)
-                    probs = torch.softmax(outputs.logits, dim=-1)[0]
-                    entail_prob = probs[2].item()
-               
-               is_omitted = 1.0 if entail_prob < self.ENTAIL_THRESHOLD else 0.0
-               omission_scores.append(is_omitted)
-          
-          return sum(omission_scores) / len(omission_scores)
-     
      def _calculate_hallucination(self, gen_ent):
           if not gen_ent:
                return 0.0, 0.0
           
-          strong_hallucination = sum(p < 0.3 for p in gen_ent) / len(gen_ent)
-          weak_hallucination = sum(0.3 <= p < 0.6 for p in gen_ent) / len(gen_ent)
+          strong_hallucination = sum(p < self.WEAK_HALLU_MIN for p in gen_ent) / len(gen_ent)
+          weak_hallucination = sum(self.WEAK_HALLU_MIN <= p < self.WEAK_HALLU_MAX for p in gen_ent) / len(gen_ent)
           
           hallucination_score = strong_hallucination * 1.0 + weak_hallucination * 0.5
           
           return hallucination_score, strong_hallucination
+     
+     def _calculate_omission(self, gen_sents, ref_sents):
+          if not ref_sents:
+               return 0.0
+          
+          if not gen_sents:
+               return 1.0
+          
+          gen_tokens = bm25s.tokenize(
+               gen_sents,
+               stopwords=self.sw,
+               stemmer=self.stemmer
+          )
+          gen_retriever = bm25s.BM25(corpus=gen_sents)
+          gen_retriever.index(gen_tokens)
+          
+          covered_count = 0
+          ##sentence level compare
+          for ref_sent in ref_sents:
+               q_tokens = bm25s.tokenize(
+                    [ref_sent],
+                    stopwords=self.sw,
+                    stemmer=self.stemmer
+               )
+               results, scores = gen_retriever.retrieve(q_tokens, k=min(self.TOP_K, len(gen_sents)))
+               
+               candidates = []
+               for i, score in enumerate(scores[0]):
+                    if score >= self.BM25_SCORE_MIN:
+                         candidates.append(gen_sents[results[0][i]])
+               
+               if not candidates:
+                    continue
+               
+               inputs = self.tokenizer(
+                    candidates,
+                    [ref_sent] * len(candidates),
+                    padding=True,
+                    truncation=True,
+                    max_length=256,
+                    return_tensors="pt"
+               )
+               inputs = {k: v.to(device) for k, v in inputs.items()}
+               
+               with torch.no_grad():
+                    logits = self.model(**inputs).logits
+                    probs = torch.softmax(logits, dim=-1)
+                    entail_probs = probs[:, 2]
+               
+               if (entail_probs >= self.ENTAIL_THRESHOLD).any():
+                    covered_count += 1
+          
+          omission_rate = 1 - (covered_count / len(ref_sents))
+          
+          return round(omission_rate, 4)
+
+     def _check_entity_consistency(self, gen_sents, doc_sents):
+          doc_entities = set()
+          for sent in doc_sents:
+               doc = self.nlp(sent)
+               doc_entities.update([(ent.text, ent.label_) for ent in doc.ents])
+          
+          inconsistent = 0
+          total = 0
+          for sent in gen_sents:
+               doc = self.nlp(sent)
+               for ent in doc.ents:
+                    total += 1
+                    if (ent.text, ent.label_) not in doc_entities:
+                         if not self._is_synonym_entity(ent.text, ent.label_, doc_entities):
+                              inconsistent += 1
+          
+          return inconsistent / total if total > 0 else 0.0
+
+     def _is_synonym_entity(self, entity, label, doc_entities):
+          entity_doc = self.nlp(entity)
+          for doc_ent, doc_label in doc_entities:
+               if label != doc_label:
+                    continue
+                    
+               doc_ent_doc = self.nlp(doc_ent)
+               if entity_doc.similarity(doc_ent_doc) > 0.85:
+                    return True
+          return False
