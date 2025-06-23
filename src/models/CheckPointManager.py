@@ -64,12 +64,16 @@ class ModelCheckpointManager:
           if not checkpoints:
                return None
           
+          ################test
+          print(f"original checkpoints: {checkpoints}")
+          ##############################
+          
           latest = sorted(checkpoints)[-1]
           filepath = os.path.join(self.checkpoint_dir, latest)
           checkpoint = torch.load(filepath, map_location=device)
           
           ################test
-          print(f"original checkpoints: {checkpoints}")
+          print(f"sorted checkpoints: {sorted(checkpoints)}")
           print(f"latest: {latest}")
           print(f"file path: {filepath}")
           print(f"checkpoint epoch: {checkpoint['epoch']}")
