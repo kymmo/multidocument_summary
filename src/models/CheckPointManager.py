@@ -64,20 +64,22 @@ class ModelCheckpointManager:
           if not checkpoints:
                return None
           
-          ################test
-          print(f"original checkpoints: {checkpoints}")
-          ##############################
+          def get_epoch_num(f):
+               import re
+               match = re.search(r'epoch(\d+)', f)
+               return int(match.group(1)) if match else -1
+
+          epoch_files = [f for f in checkpoints if 'epoch' in f]
           
-          latest = sorted(checkpoints)[-1]
+          if epoch_files:
+               epoch_files.sort(key=get_epoch_num, reverse=True)
+               latest = epoch_files[0]
+          else:
+               latest = sorted(checkpoints)[-1]
+
           filepath = os.path.join(self.checkpoint_dir, latest)
           checkpoint = torch.load(filepath, map_location=device)
           
-          ################test
-          print(f"sorted checkpoints: {sorted(checkpoints)}")
-          print(f"latest: {latest}")
-          print(f"file path: {filepath}")
-          print(f"checkpoint epoch: {checkpoint['epoch']}")
-          ###########################
           ## version check
           required_keys = ['stage', 'epoch', 'timestamp']
           if not all(k in checkpoint for k in required_keys):
