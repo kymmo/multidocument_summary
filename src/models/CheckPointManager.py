@@ -68,6 +68,12 @@ class ModelCheckpointManager:
           filepath = os.path.join(self.checkpoint_dir, latest)
           checkpoint = torch.load(filepath, map_location=device)
           
+          ################test
+          print(f"original checkpoints: {checkpoints}")
+          print(f"latest: {latest}")
+          print(f"file path: {filepath}")
+          print(f"checkpoint epoch: {checkpoint['epoch']}")
+          ###########################
           ## version check
           required_keys = ['stage', 'epoch', 'timestamp']
           if not all(k in checkpoint for k in required_keys):
