@@ -175,7 +175,7 @@ def get_bert_score(generated_refer_summary_pair_list):
      return round(average_f1_score, 4)
 
 def get_infor_score(original_sents_list, generated_refer_summary_pair_list):
-     infor_metrics_cal = InforMetricsCalculator(TOP_K=6, BM25_SCORE_MIN=0.1, ENTAIL_THRESHOLD=0.75, WEAK_HALLU_MIN = 0.25, WEAK_HALLU_MAX = 0.65)
+     infor_metrics_cal = InforMetricsCalculator(TOP_K=5, BM25_SCORE_MIN=0.1, ENTAIL_THRESHOLD=0.75, WEAK_HALLU_MIN = 0.25, WEAK_HALLU_MAX = 0.65)
      hallucination_rates = []
      faithfulness_scores = []
      omission_rates = []

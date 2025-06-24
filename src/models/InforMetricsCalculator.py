@@ -92,7 +92,7 @@ class InforMetricsCalculator:
                "strong_hallucination": round(strong_hallucination, 4),
                "faithfulness": round(faithfulness, 4),
                "omission": round(omission, 4),
-               "contradiction": round(contradiction_rate, 4)
+               "contradiction": round(contradiction_rate, 4),
           }
           
      def _retrieve_and_nli(self, retriever, hypotheses):
@@ -175,6 +175,9 @@ class InforMetricsCalculator:
           covered_count = 0
           ##sentence level compare
           for ref_sent in ref_sents:
+               if not ref_sent:
+                    continue
+               
                q_tokens = bm25s.tokenize(
                     [ref_sent],
                     stopwords=self.sw,
@@ -183,9 +186,9 @@ class InforMetricsCalculator:
                results, scores = gen_retriever.retrieve(q_tokens, k=min(self.TOP_K, len(gen_sents)))
                
                candidates = []
-               for i, score in enumerate(scores[0]):
+               for i, score in enumerate(scores[0]): # only one hypo
                     if score >= self.BM25_SCORE_MIN:
-                         candidates.append(gen_sents[results[0][i]])
+                         candidates.append(results[0][i])
                
                if not candidates:
                     continue
@@ -211,32 +214,3 @@ class InforMetricsCalculator:
           omission_rate = 1 - (covered_count / len(ref_sents))
           
           return round(omission_rate, 4)
-
-     def _check_entity_consistency(self, gen_sents, doc_sents):
-          doc_entities = set()
-          for sent in doc_sents:
-               doc = self.nlp(sent)
-               doc_entities.update([(ent.text, ent.label_) for ent in doc.ents])
-          
-          inconsistent = 0
-          total = 0
-          for sent in gen_sents:
-               doc = self.nlp(sent)
-               for ent in doc.ents:
-                    total += 1
-                    if (ent.text, ent.label_) not in doc_entities:
-                         if not self._is_synonym_entity(ent.text, ent.label_, doc_entities):
-                              inconsistent += 1
-          
-          return inconsistent / total if total > 0 else 0.0
-
-     def _is_synonym_entity(self, entity, label, doc_entities):
-          entity_doc = self.nlp(entity)
-          for doc_ent, doc_label in doc_entities:
-               if label != doc_label:
-                    continue
-                    
-               doc_ent_doc = self.nlp(doc_ent)
-               if entity_doc.similarity(doc_ent_doc) > 0.85:
-                    return True
-          return False
