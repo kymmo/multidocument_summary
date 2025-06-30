@@ -294,6 +294,10 @@ def fine_tune_t5(file_path, val_file_path, out_size, num_epochs = 20,
           
           print(f"Resume training! From epoch {start_epoch}.")
      
+     if early_stopper.early_stop_triggered:
+          print("Early stop has been triggered. Skip training.")
+          start_epoch = num_epochs
+          
      try:
           long_text_encoder = LongTextEncoder(t5_tokenizer, t5_model)
           

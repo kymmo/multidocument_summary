@@ -2,6 +2,7 @@ from torch_geometric.data import HeteroData
 from torch.utils.data import Dataset
 import torch.multiprocessing as mp
 from torch_geometric.data import Batch
+import torch
 
 from utils.graph_utils import get_embed_graph, get_embed_graph_node_map
 
@@ -72,3 +73,36 @@ def custom_collate_fn(batch):
           batched_graph.append(graph)
      
      return batched_graph, batched_maps, batch_summary
+
+class JointTrainingDataset(Dataset):
+     """
+     Loads the raw graph object (with initial embeddings and raw sentence text)
+     and the corresponding summary string for joint training.
+     """
+     def __init__(self, file_path, dataset_type, sent_similarity):
+          self.dataset_type = dataset_type
+          self.sent_similarity = sent_similarity
+          self.graphs, self.summaries = self._load_data(file_path)
+
+     def _load_data(self, file_path):
+          embedded_graphs, node_maps, summary_list = \
+          get_embed_graph_node_map(file_path=file_path, dataset_type=self.dataset_type, sent_similarity=self.sent_similarity) ## node_maps: sent_node_id-> sent_text
+          
+          return embedded_graphs, summary_list
+
+     def __len__(self):
+          return len(self.graphs)
+
+     def __getitem__(self, idx):
+          return self.graphs[idx], self.summaries[idx]
+
+def joint_collate_fn(batch):
+     graphs, summaries = zip(*batch)
+     graph_list = list(graphs)
+     batched_graph = Batch.from_data_list(graph_list)
+     
+     return {
+          'batched_graph': batched_graph,
+          'label_summaries': list(summaries),
+          'graph_list': graph_list,
+     }

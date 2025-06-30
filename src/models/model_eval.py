@@ -3,22 +3,23 @@ import time
 import os
 import random
 import csv
+from tqdm import tqdm
 from bert_score import score
 from torch_geometric.data import Batch
 from torch.utils.data import DataLoader as data_DataLoader
 from transformers import T5Tokenizer, T5ForConditionalGeneration, T5TokenizerFast
 
 from utils.model_utils import clean_memory, freeze_model
-from models.CustomT5 import reshape_embedding_to_tensors
-from models.DatasetLoader import EvalDataset, custom_collate_fn
+from models.DatasetLoader import EvalDataset, custom_collate_fn, JointTrainingDataset, joint_collate_fn
 from models.CheckPointManager import DataType
 from models.ModelFileManager import model_fm
 from models.two_stage_train import get_combined_embed2
 from models.LongTextEncoder import LongTextEncoder
-from utils.model_utils import rouge_eval, merge_dicts
+from utils.model_utils import rouge_eval, merge_dicts, reshape_embedding_to_tensors
 from models.InforMetricsCalculator import InforMetricsCalculator
+from models.JointOrchestrator import JointOrchestrator
 
-base_model = "google-t5/t5-base"
+base_model = "t5-base"
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 t5_tokenizer = T5TokenizerFast.from_pretrained("t5-base")
 t5_model = T5ForConditionalGeneration.from_pretrained(base_model, use_cache=False).to(device)
@@ -119,9 +120,136 @@ def eval_t5_summary(eval_data_path, max_summary_length, batch_size = 16, sent_si
           "contradiction": infor_score['contradiction'],
      }
      
+
+def eval_join_summary(eval_data_path, max_summary_length, batch_size = 16, sent_similarity = 0.6):
+     ## models load
+     orchestrator_model = model_fm.load_joint_model()
+     orchestrator_model.to(device)
+     orchestrator_model.eval()
+     
+     eval_dataset = JointTrainingDataset(file_path=eval_data_path, dataset_type=DataType.TEST.value, sent_similarity=sent_similarity)
+     eval_dataloader = data_DataLoader(
+          eval_dataset,
+          batch_size=batch_size,
+          shuffle=False,
+          collate_fn=joint_collate_fn
+     )
+     
+     generated_refer_summary_pair_list = []
+     original_sents_list = []
+     
+     print("Start evaluation...")
+     try:
+          eval_start_time = time.time()
+          with torch.no_grad():
+               for eval_batch in tqdm(eval_dataloader, total=len(eval_dataloader), desc=f"Evaluation"):
+                    
+                    with torch.cuda.amp.autocast():
+                         batched_graph = eval_batch['batched_graph'].to(device)
+                         label_summaries = eval_batch['label_summaries']
+                         graph_list = eval_batch['graph_list']
+                    
+                         summaries = generate_summary_4_join_model(
+                              model=orchestrator_model, 
+                              batched_graph=batched_graph, 
+                              graph_list=graph_list, 
+                              max_summary_length=max_summary_length,
+                         )
+                         
+                         sent_texts = batched_graph['sentence'].text
+                         generated_refer_summary_pair_list.append((label_summaries, summaries))
+                         original_sents_list.append(sent_texts)
+
+          
+          print(f"Finish Summary Generation, time cost:  {time.time() - eval_start_time:.4f} s.")
+
+          rouge_score_dict = get_rouge_score(generated_refer_summary_pair_list=generated_refer_summary_pair_list)
+          bert_score = get_bert_score(generated_refer_summary_pair_list=generated_refer_summary_pair_list)
+          infor_score = get_infor_score(original_sents_list, generated_refer_summary_pair_list)
+          print(f"Finish Evaluation, time cost:  {time.time() - eval_start_time:.4f} s.")
+          
+          
+          # Save generated summary for human check
+          summary_saved_path = os.path.join("/","content", "drive", "MyDrive", "saved_summary_sample")
+          os.makedirs(summary_saved_path, exist_ok=True)
+          
+          sample_num = 30
+          ref_sums = []
+          gen_sums = []
+          for ref_summary, gen_summary in generated_refer_summary_pair_list:
+               ref_sums.extend(ref_summary)
+               gen_sums.extend(gen_summary)
+          
+          sample_idxs = random.sample(range(len(ref_sums)), min(sample_num, len(ref_sums)))
+          ref_sample_sums = [ref_sums[idx] for idx in sample_idxs]
+          gen_sample_sums = [gen_sums[idx] for idx in sample_idxs]
+          
+          with open(os.path.join(summary_saved_path, "summary_check_file.csv"), "w", encoding="utf-8", newline="") as csvfile:
+               writer = csv.writer(csvfile)
+               writer.writerow(["Index", "Reference Summary", "Generated Summary"])
+               
+               for i, (ref, gen) in enumerate(zip(ref_sample_sums, gen_sample_sums)):
+                    writer.writerow([i, ref.replace("\n", " "), gen.replace("\n", " ")])
+          
+          print(f"The sample summary file has saved in {summary_saved_path}")
+
+     except Exception as e:
+          raise e
+     
+     
+     return {
+          'rouge': rouge_score_dict,
+          'bert': bert_score,
+          "hallucination": infor_score['hallucination'],
+          "strong_hallucination": infor_score['strong_hallucination'],
+          "faithfulness": infor_score['faithfulness'],
+          "omission": infor_score['omission'],
+          "contradiction": infor_score['contradiction'],
+     }
+     
+def generate_summary_4_join_model(model: JointOrchestrator, batched_graph, graph_list, max_summary_length=512):
+     
+     with torch.no_grad():
+          combin_embeddings_list = model._data_process(batched_graph, graph_list)
+          inputs_comb_embeds, attention_mask = reshape_embedding_to_tensors(combin_embeddings_list=combin_embeddings_list, device=device)
+          inputs_embeds = model.custom_t5.projector(inputs_comb_embeds)
+
+          #############test
+          print(f"combine_list: {len(combin_embeddings_list)}, {combin_embeddings_list[0].shape}")
+          print(f"reshape: {inputs_comb_embeds.shape}")
+          ################
+          generation_config = {
+               "max_length": max_summary_length,
+               "early_stopping": True,
+               "repetition_penalty": 2.5,
+               "no_repeat_ngram_size": 4,
+               "length_penalty": 0.9,
+               "do_sample": False,
+               "num_beams": 4,
+               "diversity_penalty": 0.8,
+               "num_beam_groups": 2,
+               "num_return_sequences": 1,
+               "bos_token_id": t5_tokenizer.bos_token_id or t5_tokenizer.pad_token_id,
+               "eos_token_id": t5_tokenizer.eos_token_id
+          }
+          
+          output_sequences = model.custom_t5.generate(
+               inputs_embeds=inputs_embeds,
+               attention_mask=attention_mask,
+               **generation_config
+          )
+
+          summary = t5_tokenizer.batch_decode(
+               output_sequences,
+               skip_special_tokens=True,
+               clean_up_tokenization_spaces=True
+          )
+
+          return summary
+     
 def generate_t5_summary(fine_tuned_t5, combin_embeddings_list, max_summary_length=512):
      with torch.no_grad():
-          inputs_comb_embeds, masks = reshape_embedding_to_tensors(combin_embeddings_list)
+          inputs_comb_embeds, masks = reshape_embedding_to_tensors(combin_embeddings_list=combin_embeddings_list,device=device)
           inputs_embeds = fine_tuned_t5.projector(inputs_comb_embeds)
           
           generation_config = {

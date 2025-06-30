@@ -38,7 +38,7 @@ class ModelCheckpointManager:
                'epoch': epoch,
                'timestamp': datetime.now().isoformat(),
                'stage': self.stage_name,
-               'scaler': scaler.state_dict() if scaler else None
+               'scaler': scaler.state_dict() if scaler and hasattr(scaler, 'state_dict') else None
           }
 
           for name, obj in models.items():

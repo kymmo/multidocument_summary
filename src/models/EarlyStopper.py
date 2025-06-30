@@ -66,4 +66,4 @@ class EarlyStopper:
           self.counter = state_dict.get('counter', 0)
           self.stopped_epoch = state_dict.get('stopped_epoch', None)
           self.early_stop_triggered = state_dict.get('early_stop_triggered', False)
-          print(f"[EarlyStop] Loaded state: Best Loss = {self.best_loss:.4f}, Counter = {self.counter}")
+          print(f"[EarlyStop] Loaded state: {self.get_state()}")

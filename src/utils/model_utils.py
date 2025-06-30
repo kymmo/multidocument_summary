@@ -144,7 +144,7 @@ def print_and_save_loss_curve(train_losses, val_losses, early_stopper, label = '
      
           
      try:
-          plt.savefig(SAVE_PATH, bbox_inches='tight', dpi=300)
+          plt.savefig(SAVE_PATH, bbox_inches='tight', dpi=300, format="png")
           print(f"Loss curve plot saved to {SAVE_PATH}")
           
           plt.show()
@@ -152,3 +152,33 @@ def print_and_save_loss_curve(train_losses, val_losses, early_stopper, label = '
           print(f"Error saving plot: {plot_e}")
      finally:
           plt.close()
+          
+def reshape_embedding_to_tensors(combin_embeddings_list, device, max_len = 512):
+     processed_embeddings_list = [emb.to(device) for emb in combin_embeddings_list]
+     
+     reshape_list = [] ##[tensor(1, sequence_size, embed_size)]
+     masks = [] ## (batch_size, sequence_size)
+     
+     max_node_num = max(graph_embs.shape[0] for graph_embs in processed_embeddings_list)
+     max_node_num = min(max_len, max_node_num)
+     for graph_embs in processed_embeddings_list:
+          cur_len = graph_embs.shape[0]
+          
+          padding_size = max_node_num - cur_len
+          if padding_size > 0:
+               graph_embs = torch.cat([
+                    graph_embs,
+                    torch.zeros(padding_size, graph_embs.shape[1], device=device)
+               ], dim=0)
+          elif padding_size < 0:
+               graph_embs = graph_embs[:max_node_num, :]
+               cur_len = max_node_num
+               
+          reshape_list.append(graph_embs)
+          
+          mask = torch.zeros(max_node_num, device=device)
+          mask_len = cur_len if cur_len <= max_len else max_len
+          mask[:mask_len] = 1
+          masks.append(mask)
+          
+     return torch.stack(reshape_list), torch.stack(masks)

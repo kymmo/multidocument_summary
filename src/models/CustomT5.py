@@ -2,11 +2,11 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from transformers import T5Tokenizer, T5ForConditionalGeneration, T5Config, AutoTokenizer
+from utils.model_utils import reshape_embedding_to_tensors
 
 base_model = "google-t5/t5-base"
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 t5_tokenizer = T5Tokenizer.from_pretrained(base_model)
-auto_tokenizer = AutoTokenizer.from_pretrained(base_model)
 
 class CustomT5(T5ForConditionalGeneration):
      """ custom t5 with gnn and projector"""
@@ -48,7 +48,7 @@ class CustomT5(T5ForConditionalGeneration):
 
      def forward(self, attention_mask=None, inputs_embeds=None, labels=None, combin_embeddings_list=None, label_summaries=None, **kwargs):
           if combin_embeddings_list is not None:
-               inputs_comb_embeds, masks = reshape_embedding_to_tensors(combin_embeddings_list) # [batch_size, seq_len, embedding_size]
+               inputs_comb_embeds, masks = reshape_embedding_to_tensors(combin_embeddings_list=combin_embeddings_list, device=device) # [batch_size, seq_len, embedding_size]
                inputs_embeds = self.projector(inputs_comb_embeds).to(device) # [batch, seq_len, d_model]
                attention_mask = masks.to(device)
           
@@ -70,34 +70,3 @@ class CustomT5(T5ForConditionalGeneration):
                **kwargs
           )
           
-     
-def reshape_embedding_to_tensors(combin_embeddings_list, max_len = 512):
-     processed_embeddings_list = [emb.to(device) for emb in combin_embeddings_list]
-     
-     reshape_list = [] ##[tensor(1, sequence_size, embed_size)]
-     masks = [] ## (batch_size, sequence_size)
-     
-     max_node_num = max(graph_embs.shape[0] for graph_embs in processed_embeddings_list)
-     max_node_num = min(max_len, max_node_num)
-     for graph_embs in processed_embeddings_list:
-          cur_len = graph_embs.shape[0]
-          
-          padding_size = max_node_num - cur_len
-          if padding_size > 0:
-               graph_embs = torch.cat([
-                    graph_embs,
-                    torch.zeros(padding_size, graph_embs.shape[1], device=device)
-               ], dim=0)
-          elif padding_size < 0:
-               embs_unsqueezed = graph_embs.unsqueeze(0)
-               pooled_embs = F.adaptive_avg_pool1d(embs_unsqueezed.transpose(1, 2), max_len)
-               graph_embs = pooled_embs.transpose(1, 2).squeeze(0)
-               
-          reshape_list.append(graph_embs)
-          
-          mask = torch.zeros(max_node_num, device=device)
-          mask_len = cur_len if cur_len <= max_len else max_len
-          mask[:mask_len] = 1
-          masks.append(mask)
-          
-     return torch.stack(reshape_list), torch.stack(masks)
