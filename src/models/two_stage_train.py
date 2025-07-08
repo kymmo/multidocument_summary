@@ -16,7 +16,7 @@ from models.CustomT5 import CustomT5
 from models.gnn_train_t5 import train_gnn
 from models.CheckPointManager import ModelCheckpointManager, DataType
 from utils.model_utils import freeze_model, clean_memory, print_gpu_memory, print_and_save_loss_curve, monitor_usage
-from models.LongTextEncoder import LongTextEncoder
+from models.TextEncoder import LongTextEncoder
 from models.EarlyStopper import EarlyStopper
 from models.ModelFileManager import model_fm
 
@@ -324,7 +324,7 @@ def fine_tune_t5(file_path, val_file_path, out_size, num_epochs = 20,
                     sent_text_list = [sent for doc in sent_texts for sent in doc]
                     prompt = "Summarize: "
                     sent_text_list.insert(0, prompt)
-                    sentence_text_embs = long_text_encoder.encode_batch(sent_text_list)
+                    sentence_text_embs = long_text_encoder(sent_text_list)
                     
                     concat_embs_list = get_combined_embed2(batch_graph, sentence_graph_embs, sentence_text_embs)
                     
@@ -375,7 +375,7 @@ def fine_tune_t5(file_path, val_file_path, out_size, num_epochs = 20,
                          sent_text_list = [sent for doc in sent_texts for sent in doc]
                          prompt = "Summarize: "
                          sent_text_list.insert(0, prompt)
-                         sentence_text_embs = long_text_encoder.encode_batch(sent_text_list)
+                         sentence_text_embs = long_text_encoder(sent_text_list)
 
                          concat_embs_list = get_combined_embed2(
                               val_graph,

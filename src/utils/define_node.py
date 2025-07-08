@@ -16,6 +16,9 @@ import traceback
 import numpy as np
 from tqdm.auto import tqdm
 from sklearn.cluster import DBSCAN
+from sklearn.cluster import KMeans
+from sklearn.metrics import silhouette_score, pairwise_distances
+import numpy as np
 import hdbscan
 
 
@@ -25,7 +28,7 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 NLP_MODEL_NAME = "en_core_web_lg"
-SENT_MODEL_NAME = "all-MiniLM-L6-v2"
+SENT_MODEL_NAME = "all-mpnet-base-v2"
 WORKER_NLP_BATCH_SIZE = 50 # for spacy docs process
 WORKER_TASK_BATCH_SIZE = 20 # for each subprocess
 
@@ -178,7 +181,8 @@ def process_batch(batch_input):
                          print(f"[WARN] Skipping invalid item in list_of_docs at index {i}: {doc_tuple}")
                          continue
                     
-                    compressed_text = compact_text(doc_text, eps=0.75, min_samples=3, min_cluster_size_to_be_core=2, EMB_BATCH_SIZE=16)
+                    compressed_text = compact_text(doc_text, eps=0.50, min_samples=2, EMB_BATCH_SIZE=16)
+                    # compressed_text = compact_text_auto_kmeans(doc_text, EMB_BATCH_SIZE=16, min_k=1, max_k=10)
                     all_doc_texts.append(compressed_text)
                     doc_identifiers.append((original_idx, doc_idx))
                     samples_in_batch[original_idx].append({'doc_idx_in_sample': doc_idx, 'batch_list_index': i})
@@ -373,66 +377,53 @@ def _add_edge_local(edge_data_dict, node1_idx, node2_idx, edge_type, weight=1.0)
 
      edge_data_dict[key].append({'type': edge_type, 'weight': weight})
 
-def compact_text(doc_text, eps=0.5, min_samples=2, min_cluster_size_to_be_core=3, EMB_BATCH_SIZE=32):
+def compact_text(doc_text, eps=0.5, min_samples=2, EMB_BATCH_SIZE=32):
+     """
+     Compacts a document by clustering sentence embeddings and selecting sentences from core clusters.
+
+     Args:
+          doc_text (str): The input text document.
+          min_samples (int): The number of samples in a neighborhood for a point to be considered as a core point.
+                              A lower value allows for less dense clusters.
+          EMB_BATCH_SIZE (int): The batch size for sentence embedding computation.
+
+     Returns:
+          str: The compacted text or the original text if no clusters are found.
+     """
      global _subprocess_coref_nlp, _subprocess_st_model
-     
+
      doc = _subprocess_coref_nlp(doc_text)
-     original_sentence_texts = [s.text.strip() for s in doc.sents]
+     original_sentence_texts = [s.text.strip() for s in doc.sents if s.text.strip()]
+     
      if not original_sentence_texts:
-          return []
+          return ""
 
      if len(original_sentence_texts) <= 5:
           return doc_text
-          
-     MAX_SENTENCES = 512
-     if len(original_sentence_texts) > MAX_SENTENCES:
-          chunks = [original_sentence_texts[i:i+MAX_SENTENCES]
-                    for i in range(0, len(original_sentence_texts), MAX_SENTENCES)]
-          
-          all_embeddings = []
-          for chunk in chunks:
-               with torch.inference_mode(), torch.no_grad(), torch.cuda.amp.autocast():
-                    embeddings = _subprocess_st_model.encode(
-                         chunk,
-                         convert_to_tensor=True,
-                         device='cpu',
-                         batch_size=min(EMB_BATCH_SIZE, len(chunk)))
-                    embeddings = F.normalize(embeddings, p=2, dim=1)
-                    all_embeddings.append(embeddings.cpu())
-          
-          sentence_embeddings_np = np.concatenate([e.numpy() for e in all_embeddings])
-          
-          clusterer = hdbscan.HDBSCAN(
-               min_cluster_size=min_cluster_size_to_be_core,
-               min_samples=min_samples,
-               metric='euclidean',
-               cluster_selection_epsilon=eps
-          )
-          cluster_labels = clusterer.fit_predict(sentence_embeddings_np)
-     else:
-          with torch.inference_mode(), torch.no_grad(), torch.cuda.amp.autocast():
-               sentence_embeddings = _subprocess_st_model.encode(
-                    original_sentence_texts,
-                    convert_to_tensor=True,
-                    device=device,
-                    show_progress_bar=False,
-                    batch_size=EMB_BATCH_SIZE
-               )
-          sentence_embeddings = F.normalize(sentence_embeddings, p=2, dim=1)
-          sentence_embeddings_np = sentence_embeddings.cpu().numpy()
-          clusterer = DBSCAN(eps=eps, min_samples=min_samples, metric='cosine')
-          cluster_labels = clusterer.fit_predict(sentence_embeddings_np)
-     
-     noise_mask = (cluster_labels == -1)
-     unique_clusters, counts = np.unique(cluster_labels, return_counts=True)
-     small_clusters = unique_clusters[
-          (counts <= min_cluster_size_to_be_core) &
-          (unique_clusters != -1)
-     ]
-     small_cluster_mask = np.isin(cluster_labels, small_clusters)
 
-     remove_mask = noise_mask | small_cluster_mask
-     kept_sentences = [s for s, keep in zip(original_sentence_texts, ~remove_mask) if keep]
+     all_embeddings = _subprocess_st_model.encode(
+          original_sentence_texts,
+          convert_to_tensor=True,
+          device=device,
+          batch_size=EMB_BATCH_SIZE,
+          cluster_selection_epsilon=eps,
+          show_progress_bar=False
+     )
+     all_embeddings = F.normalize(all_embeddings, p=2, dim=1)
+     sentence_embeddings_np = all_embeddings.cpu().numpy()
+     
+     num_sentences = len(original_sentence_texts)
+     min_cluster_size = max(2, min(5, int(num_sentences * 0.2)))
+
+     clusterer = hdbscan.HDBSCAN(
+          min_cluster_size=min_cluster_size,
+          min_samples=min_samples,
+          metric='euclidean',
+          cluster_selection_method='eom',
+          allow_single_cluster=True,
+     )
+     cluster_labels = clusterer.fit_predict(sentence_embeddings_np)
+     kept_sentences = [s for s, label in zip(original_sentence_texts, cluster_labels) if label != -1]
 
      return " ".join(kept_sentences) if kept_sentences else doc_text
 
@@ -684,3 +675,56 @@ def define_node_edge_opt_parallel(documents_list, edge_similarity_threshold=0.6)
      clean_memory()
 
      return word_node_list, sent_node_list, edge_data_list, sentId_nodeId_list, doc_sents_list
+
+def compact_text_auto_kmeans(doc_text, EMB_BATCH_SIZE=32):
+     global _subprocess_coref_nlp, _subprocess_st_model
+
+     doc = _subprocess_coref_nlp(doc_text)
+     original_sentence_texts = [s.text.strip() for s in doc.sents if s.text.strip()]
+     num_sentences = len(original_sentence_texts)
+
+     if num_sentences <= 3:
+          return doc_text
+
+     with torch.inference_mode(), torch.no_grad():
+          all_embeddings = _subprocess_st_model.encode(
+               original_sentence_texts, convert_to_tensor=True,
+               device='cuda' if torch.cuda.is_available() else 'cpu',
+               batch_size=EMB_BATCH_SIZE
+          )
+     sentence_embeddings_np = F.normalize(all_embeddings, p=2, dim=1).cpu().numpy()
+
+     min_k = 3
+     max_k = min(12, int(num_sentences * 0.3))
+
+     if min_k >= max_k:
+          optimal_k = min(min_k, num_sentences)
+     else:
+          silhouette_scores = []
+          k_range = range(min_k, max_k + 1)
+          for k in k_range:
+               kmeans = KMeans(n_clusters=k, random_state=42, n_init='auto')
+               labels = kmeans.fit_predict(sentence_embeddings_np)
+               if len(set(labels)) > 1:
+                    score = silhouette_score(sentence_embeddings_np, labels)
+               silhouette_scores.append(score)
+          
+          if not silhouette_scores: return doc_text
+          optimal_k = k_range[np.argmax(silhouette_scores)]
+          
+     kmeans = KMeans(n_clusters=optimal_k, random_state=42, n_init='auto')
+     labels = kmeans.fit(sentence_embeddings_np)
+     
+     representative_indices = []
+     for i in range(optimal_k):
+          cluster_indices = np.where(labels.labels_ == i)[0]
+          if len(cluster_indices) == 0: continue
+          cluster_embeddings = sentence_embeddings_np[cluster_indices]
+          distance_matrix = pairwise_distances(cluster_embeddings, metric='cosine')
+          medoid_index_in_cluster = np.argmin(distance_matrix.sum(axis=1))
+          medoid_original_index = cluster_indices[medoid_index_in_cluster]
+          representative_indices.append(medoid_original_index)
+
+     kept_sentences = [original_sentence_texts[i] for i in sorted(representative_indices)]
+     
+     return " ".join(kept_sentences)

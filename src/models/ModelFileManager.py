@@ -75,23 +75,16 @@ class ModelFileManager:
           clean_memory()
           
           try:
-               # 1. Save the CustomT5 component using Hugging Face's powerful method.
-               # This saves its config and weights.
                t5_path = os.path.join(self.joint_model_dir, "custom_t5")
                model.custom_t5.save_pretrained(t5_path)
                
-               # 2. Save the GNN's state dictionary
                torch.save(model.gnn.state_dict(), os.path.join(self.joint_model_dir, "gnn_weights.pth"))
                
-               # 3. Save the GNN's configuration dictionary as a JSON file.
-               # This is KEY to not needing to pre-define it on load.
                with open(os.path.join(self.joint_model_dir, "gnn_config.json"), 'w') as f:
                     json.dump(gnn_config, f, indent=4)
 
-               # 4. Save the Text Encoder's state dictionary
                torch.save(model.text_encoder.model.state_dict(), os.path.join(self.joint_model_dir, "text_encoder_weights.pth"))
                
-               # 5. Save the T5 Tokenizer
                t5_tokenizer.save_pretrained(self.joint_model_dir)
 
                print("Joint model components saved successfully.")
@@ -107,27 +100,20 @@ class ModelFileManager:
           if not os.path.exists(self.joint_model_dir):
                raise FileNotFoundError(f"Joint model directory not found at {self.joint_model_dir}")
 
-          # 1. Load the T5 Tokenizer
           t5_tokenizer = T5TokenizerFast.from_pretrained(self.joint_model_dir)
 
-          # 2. Load the GNN config from its JSON file
           with open(os.path.join(self.joint_model_dir, "gnn_config.json"), 'r') as f:
                gnn_config = json.load(f)
                
-          # 3. Load the T5 config from the saved CustomT5 directory
           custom_t5_path = os.path.join(self.joint_model_dir, "custom_t5")
           t5_config = T5Config.from_pretrained(custom_t5_path)
           
-          # 4. Instantiate the base T5 model for the Text Encoder
-          # We use the name from the tokenizer files.
           text_encoder_model = T5ForConditionalGeneration(t5_config)
           text_encoder_weights_path = os.path.join(self.joint_model_dir, "text_encoder_weights.pth")
           text_encoder_model.load_state_dict(
                torch.load(text_encoder_weights_path, map_location="cpu")
           )
           
-          # 6. Now, instantiate the full JointOrchestrator "shell"
-          # We have all the configs and models we need to do this.
           model = JointOrchestrator(
                gnn_config=gnn_config,
                t5_config=t5_config,
@@ -135,11 +121,8 @@ class ModelFileManager:
                t5_tokenizer=t5_tokenizer
           )
           
-          # 7. Load the saved state dicts for the GNN and the CustomT5 part
           model.gnn.load_state_dict(torch.load(os.path.join(self.joint_model_dir, "gnn_weights.pth")))
           
-          # The CustomT5's state is more complex because it's a full HF model.
-          # We load it using from_pretrained.
           model.custom_t5 = CustomT5.from_pretrained(custom_t5_path)
           
           print("Joint model fully loaded and assembled successfully.")

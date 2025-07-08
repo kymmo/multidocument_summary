@@ -3,6 +3,7 @@ import math
 import os
 from pathlib import Path
 from tqdm import tqdm
+import random
 from torch.utils.data import DataLoader
 from transformers import T5Config, T5TokenizerFast, T5ForConditionalGeneration, T5Tokenizer, get_cosine_schedule_with_warmup
 
@@ -13,10 +14,9 @@ from models.EarlyStopper import EarlyStopper
 from utils.model_utils import clean_memory, print_and_save_loss_curve
 from models.ModelFileManager import model_fm
 
-
 def run_joint_training(
      dataset_path, gnn_hidden_size, gnn_out_size, num_heads=8, gnn_learning_rate=0.001, num_epochs=20, 
-     feat_drop=0.1, attn_drop=0.1, batch_size = 16,
+     feat_drop=0.1, attn_drop=0.1, batch_size = 16, text_encoder_lr = 0.001,
      patience=5, accumulate_step=4, sent_similarity_threshold=0.6,
      llm_learning_rates_dict = None, warmup_ratio=0.1
 ):
@@ -32,7 +32,6 @@ def run_joint_training(
      if llm_learning_rates_dict is None or llm_learning_rates_dict["shallow_layers"] is None or llm_learning_rates_dict["deep_layers"] is None \
           or llm_learning_rates_dict["projector"] is None:
                llm_learning_rates_dict = {
-                    "gnn": gnn_learning_rate,
                     "shallow_layers": 1e-4,
                     "deep_layers": 5e-5,
                     "projector": 1e-3,
@@ -83,12 +82,14 @@ def run_joint_training(
      ).to(device)
 
      optimizer_grouped_parameters = [
-          {"params": orchestrator_model.gnn.parameters(), "lr": llm_learning_rates_dict["gnn"]},
+          {"params": orchestrator_model.gnn.parameters(), "lr": gnn_learning_rate},
+          {"params": orchestrator_model.text_token_encoder.parameters(), "lr": text_encoder_lr},
           {"params": orchestrator_model.custom_t5.projector.parameters(), "lr": llm_learning_rates_dict["projector"]},
           {"params": orchestrator_model.custom_t5.encoder.block[-2:].parameters(), "lr": llm_learning_rates_dict["shallow_layers"]},
           {"params": orchestrator_model.custom_t5.encoder.block[-4:-2].parameters(), "lr": llm_learning_rates_dict["deep_layers"]},
           {"params": orchestrator_model.custom_t5.decoder.block[-2:].parameters(), "lr": llm_learning_rates_dict["shallow_layers"]},
           {"params": orchestrator_model.custom_t5.decoder.block[-4:-2].parameters(), "lr": llm_learning_rates_dict["deep_layers"]},
+          {"params": orchestrator_model.llm2gnn.parameters(), "lr": 1e-5}, #######test
      ]
      optimizer = torch.optim.AdamW(optimizer_grouped_parameters, weight_decay=0.01)
      num_update_steps_per_epoch = math.ceil(len(train_dataloader) / accumulate_step)
@@ -103,7 +104,7 @@ def run_joint_training(
      scaler = torch.cuda.amp.GradScaler(enabled=True)
 
      ckpt_mgr = ModelCheckpointManager(stage_name="orchestrator_model")
-     early_stopper = EarlyStopper(patience=patience, checkpoint_manager=ckpt_mgr)
+     early_stopper = EarlyStopper(patience=patience, min_delta= 0.001, checkpoint_manager=ckpt_mgr)
      resume = False
      start_epoch = 0
      global_step = 0
@@ -144,21 +145,21 @@ def run_joint_training(
           optimizer.zero_grad()
           
           for batch_idx, batch in tqdm(enumerate(train_dataloader), total=len(train_dataloader), desc=f"Epoch {epoch}"):
-               
-               with torch.cuda.amp.autocast():
+               with torch.cuda.amp.autocast(enabled=False): ##########test
                     outputs = orchestrator_model(
                          batched_graph = batch['batched_graph'].to(device),
                          label_summaries = batch['label_summaries'],
                          graph_list = batch['graph_list'],
                     )
                     loss = outputs.loss
-                    
+
                     if torch.isnan(loss):
-                         print(f"\n[Warning] NaN loss at batch {batch_idx}. Skipping update.")
+                         print(f"[Warning] NaN loss at batch {batch_idx}. Skipping update.")
+                         scaler.zero_grad(set_to_none=True)
                          continue
-                    
+
                     scaled_loss = loss / accumulate_step
-               
+
                scaler.scale(scaled_loss).backward()
                total_loss += loss.item()
                processed_batches_this_epoch += 1
@@ -167,15 +168,13 @@ def run_joint_training(
                     scaler.step(optimizer)
                     scaler.update()
                     scheduler.step()
-                    
                     global_step += 1
                     optimizer.zero_grad(set_to_none=True)
-                    
+
                     if global_step % 100 == 0:
-                         current_lrs = scheduler.get_last_lr()
-                         lr_strings = [f"{lr:.8f}" for lr in current_lrs]
+                         lr_strings = [f"{lr:.8f}" for lr in scheduler.get_last_lr()]
                          print(f"[Batch Update] Batch {batch_idx}, Global Step: {global_step}, Learning Rates: {lr_strings}")
-          
+                              
           avg_train_loss = total_loss / processed_batches_this_epoch if processed_batches_this_epoch > 0 else 0
           train_losses.append(avg_train_loss)
           current_lrs = scheduler.get_last_lr()

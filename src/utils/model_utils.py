@@ -9,6 +9,7 @@ from rouge_score.scoring import Score
 import multiprocessing
 
 from models.CheckPointManager import parent_path
+from models.EmbeddingCompress import AdaptivePoolCompressor
 
 def clean_memory():
      gc.collect()
@@ -182,3 +183,37 @@ def reshape_embedding_to_tensors(combin_embeddings_list, device, max_len = 512):
           masks.append(mask)
           
      return torch.stack(reshape_list), torch.stack(masks)
+
+def adapt_embeddings(batch_token_list, emb_dim, device, max_len = 512):
+     compressor = AdaptivePoolCompressor(emb_dim=emb_dim, target_len=max_len)
+     
+     flatten_emb = [] ## (batch_graph_size, graph_token_size, emb_dim)
+     for graph_tokens in batch_token_list:
+          graph_embs = []
+          
+          for sent_tokens in graph_tokens:
+               graph_embs.extend(sent_tokens)
+                    
+          flatten_emb.append(torch.cat(graph_embs, dim=0))
+     
+     adapt_len_embs = []
+     masks = []
+     for batch_tok_embs in flatten_emb: ## [token_len, emb_dim]
+          cur_len = batch_tok_embs.shape[0]
+          if cur_len > max_len:
+               compressed = compressor(batch_tok_embs.unsqueeze(0))
+               cur_emb = compressed.squeeze(0)
+          elif cur_len < max_len: # padding
+               padding = torch.zeros((max_len - cur_len), batch_tok_embs.shape[1])
+               cur_emb = torch.concat([batch_tok_embs, padding], dim=0)
+          else:
+               cur_emb = batch_tok_embs
+               
+          adapt_len_embs.append(cur_emb)
+          
+          mask = torch.zeros(max_len)
+          mask_len = cur_len if cur_len <= max_len else max_len
+          mask[:mask_len] = 1
+          masks.append(mask)
+          
+     return torch.stack(adapt_len_embs, dim=0).to(device), torch.stack(masks, dim=0).to(device)

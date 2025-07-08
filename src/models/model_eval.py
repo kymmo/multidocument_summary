@@ -14,7 +14,7 @@ from models.DatasetLoader import EvalDataset, custom_collate_fn, JointTrainingDa
 from models.CheckPointManager import DataType
 from models.ModelFileManager import model_fm
 from models.two_stage_train import get_combined_embed2
-from models.LongTextEncoder import LongTextEncoder
+from models.TextEncoder import LongTextEncoder
 from utils.model_utils import rouge_eval, merge_dicts, reshape_embedding_to_tensors
 from models.InforMetricsCalculator import InforMetricsCalculator
 from models.JointOrchestrator import JointOrchestrator
@@ -66,7 +66,7 @@ def eval_t5_summary(eval_data_path, max_summary_length, batch_size = 16, sent_si
                          sent_text_list = [sent for doc in sent_texts for sent in doc]
                          prompt = "Summarize: "
                          sent_text_list.insert(0, prompt)
-                         sentence_text_embs = long_text_encoder.encode_batch(sent_text_list)
+                         sentence_text_embs = long_text_encoder(sent_text_list)
                          
                          concat_embs_list = get_combined_embed2(batch_graph, sentence_graph_embs, sentence_text_embs)
                          summaries = generate_t5_summary(fine_tuned_t5, concat_embs_list, max_summary_length)
@@ -163,13 +163,15 @@ def eval_join_summary(eval_data_path, max_summary_length, batch_size = 16, sent_
           
           print(f"Finish Summary Generation, time cost:  {time.time() - eval_start_time:.4f} s.")
 
-          rouge_score_dict = get_rouge_score(generated_refer_summary_pair_list=generated_refer_summary_pair_list)
-          bert_score = get_bert_score(generated_refer_summary_pair_list=generated_refer_summary_pair_list)
-          infor_score = get_infor_score(original_sents_list, generated_refer_summary_pair_list)
-          print(f"Finish Evaluation, time cost:  {time.time() - eval_start_time:.4f} s.")
+          #####################test
+          #########TODO:  to uncommand!!!!
+          # rouge_score_dict = get_rouge_score(generated_refer_summary_pair_list=generated_refer_summary_pair_list)
+          # bert_score = get_bert_score(generated_refer_summary_pair_list=generated_refer_summary_pair_list)
+          # infor_score = get_infor_score(original_sents_list, generated_refer_summary_pair_list)
+          # print(f"Finish Evaluation, time cost:  {time.time() - eval_start_time:.4f} s.")
           
           
-          # Save generated summary for human check
+          #### Save generated summary for human check
           summary_saved_path = os.path.join("/","content", "drive", "MyDrive", "saved_summary_sample")
           os.makedirs(summary_saved_path, exist_ok=True)
           
@@ -196,45 +198,47 @@ def eval_join_summary(eval_data_path, max_summary_length, batch_size = 16, sent_
      except Exception as e:
           raise e
      
+     ##################test
+     return {}
+     #####################
      
-     return {
-          'rouge': rouge_score_dict,
-          'bert': bert_score,
-          "hallucination": infor_score['hallucination'],
-          "strong_hallucination": infor_score['strong_hallucination'],
-          "faithfulness": infor_score['faithfulness'],
-          "omission": infor_score['omission'],
-          "contradiction": infor_score['contradiction'],
-     }
+     
+     #####################test
+     #########TODO:  to uncommand!!!!
+     # return {
+     #      'rouge': rouge_score_dict,
+     #      'bert': bert_score,
+     #      "hallucination": infor_score['hallucination'],
+     #      "strong_hallucination": infor_score['strong_hallucination'],
+     #      "faithfulness": infor_score['faithfulness'],
+     #      "omission": infor_score['omission'],
+     #      "contradiction": infor_score['contradiction'],
+     # }
      
 def generate_summary_4_join_model(model: JointOrchestrator, batched_graph, graph_list, max_summary_length=512):
      
      with torch.no_grad():
           combin_embeddings_list = model._data_process(batched_graph, graph_list)
-          inputs_comb_embeds, attention_mask = reshape_embedding_to_tensors(combin_embeddings_list=combin_embeddings_list, device=device)
-          inputs_embeds = model.custom_t5.projector(inputs_comb_embeds)
+          inputs_comb_embeds, attention_mask = model.custom_t5._data_combine(combin_embeddings_list)
 
-          #############test
-          print(f"combine_list: {len(combin_embeddings_list)}, {combin_embeddings_list[0].shape}")
-          print(f"reshape: {inputs_comb_embeds.shape}")
-          ################
           generation_config = {
-               "max_length": max_summary_length,
-               "early_stopping": True,
-               "repetition_penalty": 2.5,
-               "no_repeat_ngram_size": 4,
+               "max_length": min(max_summary_length, 512),
+               "repetition_penalty": 1.8,
+               "no_repeat_ngram_size": 3,
                "length_penalty": 0.9,
                "do_sample": False,
                "num_beams": 4,
-               "diversity_penalty": 0.8,
+               "diversity_penalty": 0.7,
                "num_beam_groups": 2,
-               "num_return_sequences": 1,
+               "early_stopping": True,
+               "do_sample": False,
+               # "temperature": 0.7,
                "bos_token_id": t5_tokenizer.bos_token_id or t5_tokenizer.pad_token_id,
                "eos_token_id": t5_tokenizer.eos_token_id
           }
           
           output_sequences = model.custom_t5.generate(
-               inputs_embeds=inputs_embeds,
+               inputs_embeds=inputs_comb_embeds,
                attention_mask=attention_mask,
                **generation_config
           )
@@ -255,7 +259,7 @@ def generate_t5_summary(fine_tuned_t5, combin_embeddings_list, max_summary_lengt
           generation_config = {
                "max_length": max_summary_length,
                "early_stopping": True,
-               "repetition_penalty": 2.0,
+               "repetition_penalty": 1.2,
                "no_repeat_ngram_size": 3,
                "length_penalty": 1.2,
                "do_sample": False,
