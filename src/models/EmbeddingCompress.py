@@ -23,7 +23,6 @@ class AdaptivePoolCompressor(nn.Module):
           
           positions = torch.linspace(0, 1, seq_len, device=x.device)  # [seq_len]
           
-          # [batch, target_len, seq_len] = [1, target_len, 1] vs [1, 1, seq_len]
           position_sim = -torch.abs(
                self.pool_positions[None, :, None] - positions[None, None, :]
           ) * seq_len

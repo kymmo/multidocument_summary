@@ -185,7 +185,7 @@ def reshape_embedding_to_tensors(combin_embeddings_list, device, max_len = 512):
      return torch.stack(reshape_list), torch.stack(masks)
 
 def adapt_embeddings(batch_token_list, emb_dim, device, max_len = 512):
-     compressor = AdaptivePoolCompressor(emb_dim=emb_dim, target_len=max_len)
+     compressor = AdaptivePoolCompressor(emb_dim=emb_dim, target_len=max_len).to(device)
      
      flatten_emb = [] ## (batch_graph_size, graph_token_size, emb_dim)
      for graph_tokens in batch_token_list:
@@ -194,7 +194,7 @@ def adapt_embeddings(batch_token_list, emb_dim, device, max_len = 512):
           for sent_tokens in graph_tokens:
                graph_embs.extend(sent_tokens)
                     
-          flatten_emb.append(torch.cat(graph_embs, dim=0))
+          flatten_emb.append(torch.cat(graph_embs, dim=0).to(device))
      
      adapt_len_embs = []
      masks = []
@@ -204,7 +204,7 @@ def adapt_embeddings(batch_token_list, emb_dim, device, max_len = 512):
                compressed = compressor(batch_tok_embs.unsqueeze(0))
                cur_emb = compressed.squeeze(0)
           elif cur_len < max_len: # padding
-               padding = torch.zeros((max_len - cur_len), batch_tok_embs.shape[1])
+               padding = torch.zeros((max_len - cur_len), batch_tok_embs.shape[1], device=device)
                cur_emb = torch.concat([batch_tok_embs, padding], dim=0)
           else:
                cur_emb = batch_tok_embs
