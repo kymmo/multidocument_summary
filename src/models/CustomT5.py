@@ -80,6 +80,9 @@ class CustomT5(T5ForConditionalGeneration):
                     emb_dim=self.pro_in,
                     device=device
                )
+               
+               inputs_comb_embeds = inputs_comb_embeds.to(device)
+               masks = masks.to(device)
 
                inputs_embeds = self.projector(inputs_comb_embeds)
                attention_mask = masks
