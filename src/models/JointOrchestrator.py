@@ -149,9 +149,9 @@ class JointOrchestrator(nn.Module):
                                         torch.tensor([token_id], device=self.device)
                                    )             # [1, hidden_size]
                     token_embed = self.special_ln(token_embed)
-                    gnn_embed = self.llm2gnn(token_embed)  # [1, out_size]
+                    gnn_embed = self.llm2gnn(token_embed).to(self.device)  # [1, out_size]
 
-                    cat = torch.cat([gnn_embed, token_embed], dim=-1).to(device)
+                    cat = torch.cat([gnn_embed, token_embed], dim=-1)
                     spe_token_emb[token_type] = cat.detach()
           
           return spe_token_emb
