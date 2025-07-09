@@ -147,9 +147,7 @@ class JointOrchestrator(nn.Module):
           with torch.no_grad():
                for token_type, token in special_tokens.items():
                     token_id = t5_tokenizer.convert_tokens_to_ids(token)
-                    token_embed = text_encoder_model.shared(
-                                        torch.tensor([token_id], device=self.device)
-                                   )             # [1, hidden_size]
+                    token_embed = text_encoder_model.shared(torch.tensor([token_id])) # [1, hidden_size]
                     token_embed = self.special_ln(token_embed)
                     gnn_embed = self.llm2gnn(token_embed)  # [1, out_size]
 
