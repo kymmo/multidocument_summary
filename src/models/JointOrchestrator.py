@@ -34,9 +34,9 @@ class JointOrchestrator(nn.Module):
           nn.init.constant_(self.llm2gnn.bias, 0.0)
           
           self.special_ln = nn.LayerNorm(text_encoder_model.config.hidden_size)
-          self.special_token_embs = self._create_special_embedding(t5_tokenizer, text_encoder_model)
-
+          
           self.to(self.device)
+          self.special_token_embs = self._create_special_embedding(t5_tokenizer, text_encoder_model)
           
      def _data_process(self, batched_graph, graph_list):
           sentence_graph_embs, _ = self.gnn(batched_graph)
@@ -147,7 +147,7 @@ class JointOrchestrator(nn.Module):
           with torch.no_grad():
                for token_type, token in special_tokens.items():
                     token_id = t5_tokenizer.convert_tokens_to_ids(token)
-                    token_embed = text_encoder_model.shared(torch.tensor([token_id])) # [1, hidden_size]
+                    token_embed = text_encoder_model.shared(torch.tensor([token_id], device=self.device)) # [1, hidden_size]
                     token_embed = self.special_ln(token_embed)
                     gnn_embed = self.llm2gnn(token_embed)  # [1, out_size]
 
