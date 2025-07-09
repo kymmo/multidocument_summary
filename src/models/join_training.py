@@ -16,7 +16,7 @@ from models.ModelFileManager import model_fm
 
 def run_joint_training(
      dataset_path, gnn_hidden_size, gnn_out_size, num_heads=8, gnn_learning_rate=0.001, num_epochs=20, 
-     feat_drop=0.1, attn_drop=0.1, batch_size = 16, text_encoder_lr = 0.001,
+     gnn_feat_drop=0.1, gnn_attn_drop=0.1, batch_size = 16, text_encoder_lr = 0.001,
      patience=5, accumulate_step=4, sent_similarity_threshold=0.6,
      llm_learning_rates_dict = None, warmup_ratio=0.1
 ):
@@ -70,8 +70,8 @@ def run_joint_training(
           'sentence_in_size': 768, 
           'word_in_size': 768 , 
           'document_in_size': 768, ## avg of sent embs
-          'feat_drop': feat_drop, 
-          'attn_drop': attn_drop,
+          'feat_drop': gnn_feat_drop, 
+          'attn_drop': gnn_attn_drop,
      }
      
      orchestrator_model = JointOrchestrator(

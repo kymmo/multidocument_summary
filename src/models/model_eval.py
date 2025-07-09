@@ -163,12 +163,10 @@ def eval_join_summary(eval_data_path, max_summary_length, batch_size = 16, sent_
           
           print(f"Finish Summary Generation, time cost:  {time.time() - eval_start_time:.4f} s.")
 
-          #####################test
-          #########TODO:  to uncommand!!!!
-          # rouge_score_dict = get_rouge_score(generated_refer_summary_pair_list=generated_refer_summary_pair_list)
-          # bert_score = get_bert_score(generated_refer_summary_pair_list=generated_refer_summary_pair_list)
-          # infor_score = get_infor_score(original_sents_list, generated_refer_summary_pair_list)
-          # print(f"Finish Evaluation, time cost:  {time.time() - eval_start_time:.4f} s.")
+          rouge_score_dict = get_rouge_score(generated_refer_summary_pair_list=generated_refer_summary_pair_list)
+          bert_score = get_bert_score(generated_refer_summary_pair_list=generated_refer_summary_pair_list)
+          infor_score = get_infor_score(original_sents_list, generated_refer_summary_pair_list)
+          print(f"Finish Evaluation, time cost:  {time.time() - eval_start_time:.4f} s.")
           
           
           #### Save generated summary for human check
@@ -198,22 +196,15 @@ def eval_join_summary(eval_data_path, max_summary_length, batch_size = 16, sent_
      except Exception as e:
           raise e
      
-     ##################test
-     return {}
-     #####################
-     
-     
-     #####################test
-     #########TODO:  to uncommand!!!!
-     # return {
-     #      'rouge': rouge_score_dict,
-     #      'bert': bert_score,
-     #      "hallucination": infor_score['hallucination'],
-     #      "strong_hallucination": infor_score['strong_hallucination'],
-     #      "faithfulness": infor_score['faithfulness'],
-     #      "omission": infor_score['omission'],
-     #      "contradiction": infor_score['contradiction'],
-     # }
+     return {
+          'rouge': rouge_score_dict,
+          'bert': bert_score,
+          "hallucination": infor_score['hallucination'],
+          "strong_hallucination": infor_score['strong_hallucination'],
+          "faithfulness": infor_score['faithfulness'],
+          "omission": infor_score['omission'],
+          "contradiction": infor_score['contradiction'],
+     }
      
 def generate_summary_4_join_model(model: JointOrchestrator, batched_graph, graph_list, max_summary_length=512):
      

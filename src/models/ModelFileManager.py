@@ -83,7 +83,8 @@ class ModelFileManager:
                with open(os.path.join(self.joint_model_dir, "gnn_config.json"), 'w') as f:
                     json.dump(gnn_config, f, indent=4)
 
-               torch.save(model.text_encoder.model.state_dict(), os.path.join(self.joint_model_dir, "text_encoder_weights.pth"))
+               # torch.save(model.text_encoder.model.state_dict(), os.path.join(self.joint_model_dir, "text_encoder_weights.pth"))
+               torch.save(model.text_token_encoder.model.state_dict(), os.path.join(self.joint_model_dir, "text_encoder_weights.pth"))
                
                t5_tokenizer.save_pretrained(self.joint_model_dir)
 
