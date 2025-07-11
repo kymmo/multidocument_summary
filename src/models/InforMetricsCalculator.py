@@ -6,6 +6,7 @@ import spacy
 import logging
 
 logging.getLogger('bm25s').setLevel(logging.WARNING)
+logging.getLogger("transformers").setLevel(logging.ERROR)
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -78,7 +79,7 @@ class InforMetricsCalculator:
                stemmer=self.stemmer
           )
 
-          retriever = bm25s.BM25(corpus=cleaned_doc_sents)
+          retriever = bm25s.BM25(corpus=cleaned_doc_sents, verbose=False)
           retriever.index(corpus_tokens)
           
           gen_ent, gen_contra = self._retrieve_and_nli(retriever, gen_summary_sents)
@@ -102,7 +103,7 @@ class InforMetricsCalculator:
                stopwords=self.sw,
                stemmer=self.stemmer
           )
-          results, scores = retriever.retrieve(q_tokens, k=min(self.TOP_K, len(retriever.corpus)))
+          results, scores = retriever.retrieve(q_tokens, k=min(self.TOP_K, len(retriever.corpus)), verbose=False)
           
           max_entail_probs = []
           max_contradiction_probs = []
@@ -169,7 +170,7 @@ class InforMetricsCalculator:
                stopwords=self.sw,
                stemmer=self.stemmer
           )
-          gen_retriever = bm25s.BM25(corpus=gen_sents)
+          gen_retriever = bm25s.BM25(corpus=gen_sents, verbose=False)
           gen_retriever.index(gen_tokens)
           
           covered_count = 0
@@ -183,7 +184,7 @@ class InforMetricsCalculator:
                     stopwords=self.sw,
                     stemmer=self.stemmer
                )
-               results, scores = gen_retriever.retrieve(q_tokens, k=min(self.TOP_K, len(gen_sents)))
+               results, scores = gen_retriever.retrieve(q_tokens, k=min(self.TOP_K, len(gen_sents)), verbose=False)
                
                candidates = []
                for i, score in enumerate(scores[0]): # only one hypo

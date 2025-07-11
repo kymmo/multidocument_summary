@@ -89,7 +89,7 @@ def run_joint_training(
           {"params": orchestrator_model.custom_t5.encoder.block[-4:-2].parameters(), "lr": llm_learning_rates_dict["deep_layers"]},
           {"params": orchestrator_model.custom_t5.decoder.block[-2:].parameters(), "lr": llm_learning_rates_dict["shallow_layers"]},
           {"params": orchestrator_model.custom_t5.decoder.block[-4:-2].parameters(), "lr": llm_learning_rates_dict["deep_layers"]},
-          {"params": orchestrator_model.llm2gnn.parameters(), "lr": 1e-5}, #######test
+          {"params": orchestrator_model.llm2gnn.parameters(), "lr": text_encoder_lr},
      ]
      optimizer = torch.optim.AdamW(optimizer_grouped_parameters, weight_decay=0.01)
      num_update_steps_per_epoch = math.ceil(len(train_dataloader) / accumulate_step)
@@ -145,7 +145,7 @@ def run_joint_training(
           optimizer.zero_grad()
           
           for batch_idx, batch in tqdm(enumerate(train_dataloader), total=len(train_dataloader), desc=f"Epoch {epoch}"):
-               with torch.cuda.amp.autocast(enabled=False): ##########test
+               with torch.cuda.amp.autocast():
                     outputs = orchestrator_model(
                          batched_graph = batch['batched_graph'].to(device),
                          label_summaries = batch['label_summaries'],

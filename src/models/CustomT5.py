@@ -46,7 +46,9 @@ class CustomT5(T5ForConditionalGeneration):
                     param.requires_grad = True
 
      def forward(self, attention_mask=None, inputs_embeds=None, labels=None,
-                    combin_embeddings_list=None, label_summaries=None, **kwargs
+                    combin_embeddings_list=None, label_summaries=None, 
+                    cov_lambda=0.01,
+                    **kwargs
      ):
           inputs_embeds, attention_mask = self._data_combine(
                combin_embeddings_list, inputs_embeds, attention_mask
@@ -70,6 +72,22 @@ class CustomT5(T5ForConditionalGeneration):
                output_attentions=True,
                **kwargs
           )
+          
+          ce_loss = outputs.loss  # token-level cross-entropy
+
+          attn_layers = outputs.decoder_attentions
+          last_layer_attn = attn_layers[-1].mean(dim=1)  # [batch, tgt_len, src_len]
+
+          coverage = torch.zeros_like(last_layer_attn[:, 0, :])  # [batch, src_len]
+          cov_loss = 0.0
+          for t in range(last_layer_attn.size(1)):
+               a_t = last_layer_attn[:, t, :]  # [batch, src_len]
+               cov_loss += torch.sum(torch.min(a_t, coverage), dim=1).mean()
+               coverage = coverage + a_t
+
+          loss = ce_loss + cov_lambda * cov_loss
+
+          outputs.loss = loss
           
           return outputs
 

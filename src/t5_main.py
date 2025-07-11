@@ -1,9 +1,13 @@
 import os
 from pathlib import Path
+import logging
 
 from models.model_eval import eval_t5_summary, eval_join_summary
 from models.two_stage_train import train_gnn_t5
 from models.join_training import run_joint_training
+
+logging.basicConfig(level=logging.ERROR)
+logging.getLogger("transformers").setLevel(logging.ERROR)
 
 def model_train_eval(dataset_path, learning_rate = 0.001, num_epochs = 20, gnn_batch_size=16, llm_batch_size=4,
                     patience = 5, llm_accumulate_step = 4, gnn_hidden_size = 512, gnn_accumulation_steps=4,
