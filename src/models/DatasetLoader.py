@@ -101,8 +101,17 @@ def joint_collate_fn(batch):
      graph_list = list(graphs)
      batched_graph = Batch.from_data_list(graph_list)
      
+     text_list = [] ## sample text string list, one string for one sample
+     for graph in graph_list:
+          sent_texts = graph['sentence'].text
+          
+          sample_text = " ".join(sent_texts)
+          text_list.append(sample_text)
+     
+     
      return {
           'batched_graph': batched_graph,
           'label_summaries': list(summaries),
           'graph_list': graph_list,
+          'sample_text_list': text_list,
      }

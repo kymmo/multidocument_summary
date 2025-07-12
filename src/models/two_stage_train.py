@@ -16,7 +16,7 @@ from models.CustomT5 import CustomT5
 from models.gnn_train_t5 import train_gnn
 from models.CheckPointManager import ModelCheckpointManager, DataType
 from utils.model_utils import freeze_model, clean_memory, print_gpu_memory, print_and_save_loss_curve, monitor_usage
-from models.TextEncoder import LongTextEncoder
+from models.CustomEncoder import LongTextEncoder
 from models.EarlyStopper import EarlyStopper
 from models.ModelFileManager import model_fm
 

@@ -2,11 +2,13 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from typing import List
-from transformers import T5Config, T5ForConditionalGeneration
+import os
+import json
+from transformers import T5Config, T5ForConditionalGeneration, T5Tokenizer
 
 from models.RelHetGraph import RelHetGraph
-from models.CustomT5 import CustomT5
-from models.TextEncoder import LongTextEncoder, LongTextTokenEncoder
+from models.CustomT5 import CustomT5, CustomT5WithPrefix
+from models.CustomEncoder import LongTextEncoder, LongTextTokenEncoder, PrefixEncoder, LongTextEncoderEnhanced
 
 torch.autograd.set_detect_anomaly(True)
 
@@ -155,3 +157,111 @@ class JointOrchestrator(nn.Module):
                     spe_token_emb[token_type] = cat.detach()
           
           return spe_token_emb
+     
+     
+class JointOrchestratorwithPrefix(nn.Module):
+     """
+     Orchestrates the joint training pipeline with a long text encoder and prefix-tuning.
+     """
+     def __init__(self, gnn_config: dict, t5_model_name: str, prefix_length: int, t5_tokenizer):
+          super().__init__()
+          self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+          self.gnn = RelHetGraph(**gnn_config)
+          
+          t5_config = T5Config.from_pretrained(t5_model_name)
+          self.custom_t5 = CustomT5WithPrefix(t5_config)
+          self.prefix_encoder = PrefixEncoder(t5_config, gnn_config['out_size'], prefix_length)
+          
+          self.long_text_encoder = LongTextEncoderEnhanced(t5_model_name, t5_tokenizer)
+          
+          self.tokenizer = t5_tokenizer
+          
+          self.config = {
+               "gnn_config": gnn_config,
+               "t5_model_name": t5_model_name,
+               "prefix_length": prefix_length
+          }
+          
+          self._freeze_parameters()
+          self.to(self.device)
+
+     def _freeze_parameters(self):
+          # Freeze
+          for param in self.parameters():
+               param.requires_grad = False
+                              
+          # Unfreeze the trainable components
+          for param in self.gnn.parameters(): 
+               param.requires_grad = False
+          
+          for param in self.prefix_encoder.parameters(): 
+               param.requires_grad = True
+          
+          for param in self.long_text_encoder.compressor.parameters():
+               param.requires_grad = True
+               
+          # Unfreeze top layers of T5
+          for layer in self.custom_t5.encoder.block[-2:]:
+               for param in layer.parameters():
+                    param.requires_grad = True
+          for layer in self.custom_t5.decoder.block[-2:]:
+               for param in layer.parameters():
+                    param.requires_grad = True
+
+     def forward(self, source_text_list: List[str], batched_graph, label_summaries: List[str], **kwargs):
+          """
+          Args:
+               source_text_list (List[str]): A list of long concatenated source documents string.
+               batched_graph (torch_geometric.data.HeteroData): The batched graph.
+               label_summaries (List[str]): The list of target summary strings.
+          """
+          batched_graph = batched_graph.to(self.device)
+          
+          source_embeds, source_mask = self.long_text_encoder(source_text_list)
+          source_embeds = source_embeds.to(self.device)
+          source_mask = source_mask.to(self.device)
+          
+          sentence_graph_embs, _ = self.gnn(batched_graph)
+          prefix_embeds = self.prefix_encoder(sentence_graph_embs)
+          
+          labels = self.tokenizer(
+               label_summaries, return_tensors="pt", padding=True, truncation=True
+          ).input_ids.to(self.device)
+
+          outputs = self.custom_t5(
+               inputs_embeds=source_embeds,
+               attention_mask=source_mask,
+               prefix_embeds=prefix_embeds,
+               labels=labels,
+               **kwargs
+          )
+
+          return outputs
+
+     @torch.no_grad()
+     def generate(self, source_text_list: List[str], batched_graph, **kwargs):
+          self.eval()
+          
+          batched_graph = batched_graph.to(self.device)
+          
+          source_embeds, source_mask = self.long_text_encoder(source_text_list)
+          source_embeds = source_embeds.to(self.device)
+          source_mask = source_mask.to(self.device)
+          
+          sentence_graph_embs, _ = self.gnn(batched_graph)
+          prefix_embeds = self.prefix_encoder(sentence_graph_embs)
+          
+          full_input_embeds = torch.cat([prefix_embeds.expand(source_embeds.shape[0], -1, -1), source_embeds], dim=1)
+          full_attention_mask = torch.cat([
+               torch.ones(prefix_embeds.shape[0], prefix_embeds.shape[1], device=self.device).expand(source_mask.shape[0], -1), 
+               source_mask
+          ], dim=1)
+          
+          generated_ids = self.custom_t5.generate(
+               inputs_embeds=full_input_embeds,
+               attention_mask=full_attention_mask,
+               **kwargs
+          )
+          
+          return self.tokenizer.batch_decode(generated_ids, skip_special_tokens=True)

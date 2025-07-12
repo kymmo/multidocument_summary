@@ -1,6 +1,10 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from typing import List
+from transformers import T5Config, T5Tokenizer, T5EncoderModel
+
+from models.EmbeddingCompress import AdaptivePoolCompressor
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -151,3 +155,80 @@ class LongTextTokenEncoder(nn.Module):
                     print(f"[WARNING] token embedding is empty.")
           
           return all_token_embeddings
+     
+class PrefixEncoder(nn.Module):
+     """
+     Encodes the GNN embeddings into a prefix for the T5 model.
+     """
+     def __init__(self, config: T5Config, gnn_out_size: int, prefix_length: int):
+          super().__init__()
+          self.prefix_length = prefix_length
+          self.prefix_dim = config.d_model
+          
+          self.transform = nn.Sequential(
+               nn.Linear(gnn_out_size, self.prefix_dim * self.prefix_length),
+          )
+
+     def forward(self, sentence_gnn_embeddings: torch.Tensor) -> torch.Tensor:
+          # aggregate sentence embeddings to a single document-cluster representation
+          doc_cluster_embedding = torch.mean(sentence_gnn_embeddings, dim=0, keepdim=True)
+          
+          prefix_flat = self.transform(doc_cluster_embedding)
+          # Reshape to (batch_size=1, prefix_length, d_model)
+          prefix = prefix_flat.view(-1, self.prefix_length, self.prefix_dim)
+          return prefix
+     
+class LongTextEncoderEnhanced(nn.Module):
+     """
+     Encodes text that is longer than the model's max input size.
+     It does this by chunking the text, getting embeddings for each chunk,
+     and then using a compressor to create a single fixed-size representation.
+     """
+     def __init__(self, t5_model_name: str, tokenizer: T5Tokenizer, target_len: int = 512, chunk_size: int = 400, stride: int = 200):
+          super().__init__()
+          self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+          self.encoder = T5EncoderModel.from_pretrained(t5_model_name).to(self.device)
+          self.encoder.eval()
+          for param in self.encoder.parameters():
+               param.requires_grad = False
+               
+          self.tokenizer = tokenizer
+          self.compressor = AdaptivePoolCompressor(self.encoder.config.d_model, target_len)
+          self.chunk_size = chunk_size
+          self.stride = stride
+
+     def forward(self, long_text_list: List[str]) -> torch.Tensor:
+          """ long_text_list: list of docs_text of one sample
+          """
+          batch_embeddings = []
+          for text in long_text_list:
+               # 1. Tokenize the entire long text
+               token_ids = self.tokenizer.encode(text, add_special_tokens=False)
+               
+               # 2. Create overlapping chunks
+               chunks = [token_ids[i:i + self.chunk_size] for i in range(0, len(token_ids), self.stride)]
+               if not chunks:
+                    chunks = [[self.tokenizer.pad_token_id]]
+               
+               chunk_tensors = self.tokenizer.pad(
+                    {"input_ids": chunks},
+                    padding="longest",
+                    return_tensors="pt"
+               )['input_ids'].to(self.device)
+
+               # 3. Get embeddings for each chunk
+               with torch.no_grad():
+                    chunk_embeddings = self.encoder(input_ids=chunk_tensors).last_hidden_state
+
+               # 4. Concatenate embeddings from all chunks to form one long sequence
+               full_embedding = torch.cat([emb.view(-1, emb.shape[-1]) for emb in chunk_embeddings], dim=0)
+               batch_embeddings.append(full_embedding)
+          
+          max_len = max(emb.shape[0] for emb in batch_embeddings)
+          padded_batch = torch.stack([
+               F.pad(emb, (0, 0, 0, max_len - emb.shape[0])) for emb in batch_embeddings
+          ])
+          
+          compressed_embeddings, attention_mask = self.compressor(padded_batch)
+          
+          return compressed_embeddings, attention_mask

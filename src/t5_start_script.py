@@ -169,6 +169,11 @@ def run_join(args_list=None):
                          default=0.001,
                          help='GNN Learning rate.')
      
+     parser.add_argument('--encoder-learning-rate',
+                         type=float,
+                         default=3e-4,
+                         help='Text Encoder Learning rate.')
+     
      parser.add_argument('--num-epochs',
                          type=int,
                          default=20,
@@ -218,10 +223,6 @@ def run_join(args_list=None):
                          type=float,
                          default=1e-5,
                          help='Learning rate for last 3/4 encoder/decoder blocks of T5.')
-     parser.add_argument('--t5-lr-projector',
-                         type=float,
-                         default=1e-3,
-                         help='Learning rate for the custom projector layer.')
      
      parser.add_argument('--warmup-ratio',
                          type=float,
@@ -243,17 +244,18 @@ def run_join(args_list=None):
                          default=200,
                          help='Max size of summary.')
      
+     
      args = parser.parse_args(args_list)
      
      t5_learning_rates_dict_from_args = {
           "shallow_layers": args.t5_lr_shallow_layers,
-          "deep_layers": args.t5_lr_deep_layers,
-          "projector": args.t5_lr_projector
+          "deep_layers": args.t5_lr_deep_layers
      }
      
      print("--- Starting Joint Model Training & Evaluation ---")
      print(f"Dataset Path:                {args.dataset_path}")
      print(f"GNN Learning Rate:           {args.gnn_learning_rate}")
+     print(f"Encoder Learning Rate:       {args.encoder_learning_rate}")
      print(f"Num Epochs:                  {args.num_epochs}")
      print(f"Batch Size:                  {args.batch_size}")
      print(f"Accumulation Step:           {args.accumulate_step}")
@@ -264,7 +266,6 @@ def run_join(args_list=None):
      print(f"GNN Hidden Size:             {args.gnn_hidden_size}")
      print(f"T5 Shallow LR (Last 2):      {args.t5_lr_shallow_layers}")
      print(f"T5 Deep LR (Last 2 to 4):    {args.t5_lr_deep_layers}")
-     print(f"T5 Projector LR:             {args.t5_lr_projector}")
      print(f"Scheduler Warmup Ratio:      {args.warmup_ratio}")
      print(f"GNN Feature Drop-Out Rate:   {args.gnn_feat_drop}")
      print(f"GNN Attention Drop-Out Rate: {args.gnn_attn_drop}")
@@ -275,6 +276,7 @@ def run_join(args_list=None):
           scores = join_train_eval(
                dataset_path=args.dataset_path,
                gnn_learning_rate=args.gnn_learning_rate,
+               encoder_learning_rate=args.encoder_learning_rate,
                num_epochs=args.num_epochs,
                batch_size=args.batch_size,
                accumulate_step=args.accumulate_step,
@@ -309,7 +311,7 @@ if __name__ == "__main__":
      
      parser_join = subparsers.add_parser('join', help='Run joint model')
      parser_join.set_defaults(func=run_join)
-     
+
      args, remaining = parser.parse_known_args()
      
      args.func(remaining)

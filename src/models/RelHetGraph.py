@@ -17,7 +17,6 @@ class EdgeKeyTuple(Enum):
 class RelHetGraph(nn.Module):
      
      def __init__(self,  hidden_size, out_size, num_heads, projection_dim, 
-                    max_pos_len=1024, max_seg_len=16,
                     sentence_in_size = 768, word_in_size = 768, 
                     document_in_size = 768, feat_drop=0.1, attn_drop=0.1):
           super().__init__()
@@ -25,9 +24,6 @@ class RelHetGraph(nn.Module):
           self.lin_sent = nn.Linear(sentence_in_size, sentence_in_size)
           self.lin_word = nn.Linear(word_in_size, word_in_size)
           self.lin_doc = nn.Linear(document_in_size, document_in_size)
-          
-          self.position_embeddings = nn.Embedding(max_pos_len, sentence_in_size) ## document, sentence and word has same emb size
-          self.segment_embeddings = nn.Embedding(max_seg_len, sentence_in_size)
           
           # GAT1
           conv1_dict = {

@@ -39,7 +39,7 @@ def model_train_eval(dataset_path, learning_rate = 0.001, num_epochs = 20, gnn_b
      return scores_dict
 
 def join_train_eval(dataset_path, gnn_learning_rate = 0.001, num_epochs = 20, batch_size=16,
-                    patience = 5, gnn_hidden_size = 512, accumulate_step=4,
+                    patience = 5, gnn_hidden_size = 512, accumulate_step=4, encoder_learning_rate=3e-4,
                     sent_similarity_threshold = 0.75, gnn_out_size = 768, num_heads = 8,
                     llm_learning_rates_dict = None, warmup_ratio = 0.1,
                     gnn_feat_drop=0.1, gnn_attn_drop=0.1,
@@ -51,6 +51,7 @@ def join_train_eval(dataset_path, gnn_learning_rate = 0.001, num_epochs = 20, ba
           gnn_out_size=gnn_out_size,
           num_heads=num_heads,
           gnn_learning_rate=gnn_learning_rate,
+          encoder_learning_rate=encoder_learning_rate,
           num_epochs=num_epochs,
           gnn_feat_drop=gnn_feat_drop,
           gnn_attn_drop=gnn_attn_drop,

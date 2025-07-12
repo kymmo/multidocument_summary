@@ -1,12 +1,13 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from typing import Optional
 from transformers import T5Tokenizer, T5ForConditionalGeneration, T5Config, AutoTokenizer
 from utils.model_utils import reshape_embedding_to_tensors, adapt_embeddings
 
 base_model = "google-t5/t5-base"
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-t5_tokenizer = T5Tokenizer.from_pretrained(base_model)
+t5_tokenizer = T5Tokenizer.from_pretrained(base_model, legacy=True)
 
 class CustomT5(T5ForConditionalGeneration):
      """ custom t5 with gnn and projector and coverage loss"""
@@ -142,3 +143,52 @@ class ResProjector(nn.Module):
           x = self.dense2(x)
           
           return x + sc
+     
+class CustomT5WithPrefix(T5ForConditionalGeneration):
+     """
+     Custom T5 model that incorporates a prefix for conditional generation.
+     The prefix is generated from external information (e.g., GNN embeddings).
+     """
+     def __init__(self, config: T5Config):
+          super().__init__(config)
+          self.gradient_checkpointing_enable()
+
+     def get_input_embeddings(self):
+          return self.shared
+
+     def set_input_embeddings(self, new_embeddings):
+          self.shared = new_embeddings
+
+     def forward(
+          self,
+          inputs_embeds: Optional[torch.FloatTensor] = None,
+          attention_mask: Optional[torch.FloatTensor] = None,
+          prefix_embeds: Optional[torch.Tensor] = None,
+          labels: Optional[torch.LongTensor] = None,
+          **kwargs,
+     ):
+          is_encoder_pass = "encoder_outputs" not in kwargs or kwargs.get("encoder_outputs") is None
+
+          if is_encoder_pass:
+               if inputs_embeds is None:
+                    raise ValueError("`inputs_embeds` must be provided for the initial encoder pass.")
+
+               batch_size = inputs_embeds.shape[0]
+
+               if prefix_embeds is not None:
+                    prefix_length = prefix_embeds.shape[1]
+                    if prefix_embeds.shape[0] != batch_size:
+                         prefix_embeds = prefix_embeds.expand(batch_size, -1, -1)
+                    
+                    inputs_embeds = torch.cat([prefix_embeds, inputs_embeds], dim=1)
+                    
+                    if attention_mask is not None:
+                         prefix_attention_mask = torch.ones(batch_size, prefix_length, device=attention_mask.device)
+                         attention_mask = torch.cat([prefix_attention_mask, attention_mask], dim=1)
+
+          return super().forward(
+               inputs_embeds=inputs_embeds,
+               attention_mask=attention_mask,
+               labels=labels,
+               **kwargs,
+          )

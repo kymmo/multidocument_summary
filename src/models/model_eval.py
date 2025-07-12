@@ -14,10 +14,10 @@ from models.DatasetLoader import EvalDataset, custom_collate_fn, JointTrainingDa
 from models.CheckPointManager import DataType
 from models.ModelFileManager import model_fm
 from models.two_stage_train import get_combined_embed2
-from models.TextEncoder import LongTextEncoder
+from models.CustomEncoder import LongTextEncoder
 from utils.model_utils import rouge_eval, merge_dicts, reshape_embedding_to_tensors
 from models.InforMetricsCalculator import InforMetricsCalculator
-from models.JointOrchestrator import JointOrchestrator
+from models.JoinModel import JointOrchestrator, JointOrchestratorwithPrefix
 
 base_model = "t5-base"
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -123,7 +123,7 @@ def eval_t5_summary(eval_data_path, max_summary_length, batch_size = 16, sent_si
 
 def eval_join_summary(eval_data_path, max_summary_length, batch_size = 16, sent_similarity = 0.6):
      ## models load
-     orchestrator_model = model_fm.load_joint_model()
+     orchestrator_model = model_fm.load_join_model()
      orchestrator_model.to(device)
      orchestrator_model.eval()
      
@@ -138,6 +138,21 @@ def eval_join_summary(eval_data_path, max_summary_length, batch_size = 16, sent_
      generated_refer_summary_pair_list = []
      original_sents_list = []
      
+     generation_config = {
+          "max_length": min(max_summary_length, 512),
+          "repetition_penalty": 1.8,
+          "no_repeat_ngram_size": 3,
+          "length_penalty": 0.9,
+          "do_sample": False,
+          "num_beams": 4,
+          "diversity_penalty": 0.7,
+          "num_beam_groups": 2,
+          "early_stopping": True,
+          "do_sample": False,
+          "bos_token_id": t5_tokenizer.bos_token_id or t5_tokenizer.pad_token_id,
+          "eos_token_id": t5_tokenizer.eos_token_id
+     }
+     
      print("Start evaluation...")
      try:
           eval_start_time = time.time()
@@ -145,16 +160,15 @@ def eval_join_summary(eval_data_path, max_summary_length, batch_size = 16, sent_
                for eval_batch in tqdm(eval_dataloader, total=len(eval_dataloader), desc=f"Evaluation"):
                     
                     with torch.cuda.amp.autocast():
+                         source_text_list = eval_batch['sample_text_list']
                          batched_graph = eval_batch['batched_graph'].to(device)
                          label_summaries = eval_batch['label_summaries']
-                         graph_list = eval_batch['graph_list']
-                    
-                         summaries = generate_summary_4_join_model(
-                              model=orchestrator_model, 
+
+                         summaries = generate_summary_with_prefix_model(
+                              model=orchestrator_model,
+                              source_text_list=source_text_list,
                               batched_graph=batched_graph, 
-                              graph_list=graph_list, 
-                              max_summary_length=max_summary_length,
-                         )
+                              generation_config=generation_config)
                          
                          sent_texts = batched_graph['sentence'].text
                          generated_refer_summary_pair_list.append((label_summaries, summaries))
@@ -167,7 +181,6 @@ def eval_join_summary(eval_data_path, max_summary_length, batch_size = 16, sent_
           bert_score = get_bert_score(generated_refer_summary_pair_list=generated_refer_summary_pair_list)
           infor_score = get_infor_score(original_sents_list, generated_refer_summary_pair_list)
           print(f"Finish Evaluation, time cost:  {time.time() - eval_start_time:.4f} s.")
-          
           
           #### Save generated summary for human check
           summary_saved_path = os.path.join("/","content", "drive", "MyDrive", "saved_summary_sample")
@@ -205,7 +218,35 @@ def eval_join_summary(eval_data_path, max_summary_length, batch_size = 16, sent_
           "omission": infor_score['omission'],
           "contradiction": infor_score['contradiction'],
      }
+
+def generate_summary_with_prefix_model(model: JointOrchestratorwithPrefix,
+     source_text_list: list, batched_graph, generation_config: dict):
      
+     source_embeds, source_mask = model.long_text_encoder(source_text_list)
+     
+     sentence_graph_embs, _ = model.gnn(batched_graph)
+     prefix_embeds = model.prefix_encoder(sentence_graph_embs)
+
+     batch_size = source_embeds.shape[0]
+     full_input_embeds = torch.cat([prefix_embeds.expand(batch_size, -1, -1), source_embeds], dim=1)
+     
+     prefix_attention_mask = torch.ones(batch_size, prefix_embeds.shape[1], device=device)
+     full_attention_mask = torch.cat([prefix_attention_mask, source_mask], dim=1)
+
+     output_sequences = model.custom_t5.generate(
+          inputs_embeds=full_input_embeds,
+          attention_mask=full_attention_mask,
+          **generation_config
+     )
+
+     summaries = model.tokenizer.batch_decode(
+          output_sequences,
+          skip_special_tokens=True,
+          clean_up_tokenization_spaces=True
+     )
+
+     return summaries
+
 def generate_summary_4_join_model(model: JointOrchestrator, batched_graph, graph_list, max_summary_length=512):
      
      with torch.no_grad():
