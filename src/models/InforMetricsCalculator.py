@@ -4,9 +4,13 @@ import torch
 from transformers import AutoTokenizer, AutoModelForSequenceClassification
 import spacy
 import logging
+import os
+logging.getLogger().setLevel(logging.CRITICAL)
 
 logging.getLogger('bm25s').setLevel(logging.WARNING)
 logging.getLogger("transformers").setLevel(logging.ERROR)
+logging.getLogger("rouge_scorer").setLevel(logging.CRITICAL)
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 

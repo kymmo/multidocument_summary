@@ -18,6 +18,9 @@ from models.CustomEncoder import LongTextEncoder
 from utils.model_utils import rouge_eval, merge_dicts, reshape_embedding_to_tensors
 from models.InforMetricsCalculator import InforMetricsCalculator
 from models.JoinModel import JointOrchestrator, JointOrchestratorwithPrefix
+import logging
+
+logging.getLogger().setLevel(logging.ERROR)
 
 base_model = "t5-base"
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
