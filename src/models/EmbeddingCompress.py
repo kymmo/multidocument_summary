@@ -29,7 +29,10 @@ class AdaptivePoolCompressor(nn.Module):
           positions = torch.linspace(0, 1, seq_len, device=x.device)
           position_sim = -torch.abs(self.pool_positions.to(x.device)[None, :, None] - positions[None, None, :]) * seq_len
           combined = position_sim + weights[:, None, :] * 10
-          window_centers = torch.softmax(combined, dim=-1)
+          
+          max_vals = combined.max(dim=-1, keepdim=True).values
+          stable_combined = combined - max_vals
+          window_centers = torch.softmax(stable_combined, dim=-1)
           compressed = torch.einsum('bts,bsd->btd', window_centers, x)
           
           mask = torch.ones(batch_size, self.target_len, device=x.device)

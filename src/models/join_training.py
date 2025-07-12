@@ -136,7 +136,7 @@ def run_joint_training(
           optimizer.zero_grad()
           
           for batch_idx, batch in tqdm(enumerate(train_dataloader), total=len(train_dataloader), desc=f"Epoch {epoch}"):
-               with torch.cuda.amp.autocast():
+               with torch.cuda.amp.autocast(enabled=False):
                     outputs = orchestrator_model(
                          source_text_list = batch['sample_text_list'],
                          batched_graph = batch['batched_graph'].to(device),
@@ -179,7 +179,7 @@ def run_joint_training(
           with torch.no_grad():
                for val_batch_id, val_batch in tqdm(enumerate(val_dataloader), total=len(val_dataloader), desc=f"Epoch {epoch}"):
                     
-                    with torch.cuda.amp.autocast():
+                    with torch.cuda.amp.autocast(enabled=False):
                          val_outputs = orchestrator_model(
                               source_text_list = val_batch['sample_text_list'],
                               batched_graph = val_batch['batched_graph'].to(device),
