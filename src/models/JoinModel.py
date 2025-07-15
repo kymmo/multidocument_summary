@@ -173,7 +173,8 @@ class JointOrchestratorwithPrefix(nn.Module):
           self.custom_t5 = CustomT5WithPrefix(t5_config)
           self.prefix_encoder = PrefixEncoder(t5_config, gnn_config['out_size'], prefix_length)
           
-          self.long_text_encoder = LongTextEncoderEnhanced(t5_model_name, t5_tokenizer)
+          self.long_text_encoder = LongTextEncoderEnhanced(t5_model_name=t5_model_name, tokenizer=t5_tokenizer,
+                                                            chunk_size=400, target_len=512, stride=400)
           
           self.tokenizer = t5_tokenizer
           
@@ -193,12 +194,9 @@ class JointOrchestratorwithPrefix(nn.Module):
                               
           # Unfreeze the trainable components
           for param in self.gnn.parameters(): 
-               param.requires_grad = False
-          
-          for param in self.prefix_encoder.parameters(): 
                param.requires_grad = True
           
-          for param in self.long_text_encoder.compressor.parameters():
+          for param in self.prefix_encoder.parameters(): 
                param.requires_grad = True
                
           # Unfreeze top layers of T5
@@ -220,10 +218,11 @@ class JointOrchestratorwithPrefix(nn.Module):
           
           source_embeds, source_mask = self.long_text_encoder(source_text_list)
           source_embeds = source_embeds.to(self.device)
+          source_embeds.requires_grad_(True)
           source_mask = source_mask.to(self.device)
           
           sentence_graph_embs, _ = self.gnn(batched_graph)
-          prefix_embeds = self.prefix_encoder(sentence_graph_embs)
+          prefix_embeds = self.prefix_encoder(sentence_graph_embs, batched_graph['sentence'].batch)
           
           labels = self.tokenizer(
                label_summaries, return_tensors="pt", padding=True, truncation=True
@@ -250,7 +249,7 @@ class JointOrchestratorwithPrefix(nn.Module):
           source_mask = source_mask.to(self.device)
           
           sentence_graph_embs, _ = self.gnn(batched_graph)
-          prefix_embeds = self.prefix_encoder(sentence_graph_embs)
+          prefix_embeds = self.prefix_encoder(sentence_graph_embs, batched_graph['sentence'].batch)
           
           full_input_embeds = torch.cat([prefix_embeds.expand(source_embeds.shape[0], -1, -1), source_embeds], dim=1)
           full_attention_mask = torch.cat([

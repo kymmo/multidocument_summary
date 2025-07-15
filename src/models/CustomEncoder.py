@@ -3,6 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from typing import List
 from transformers import T5Config, T5Tokenizer, T5EncoderModel
+from torch_geometric.nn import global_mean_pool
 
 from models.EmbeddingCompress import AdaptivePoolCompressor
 
@@ -169,13 +170,12 @@ class PrefixEncoder(nn.Module):
                nn.Linear(gnn_out_size, self.prefix_dim * self.prefix_length),
           )
 
-     def forward(self, sentence_gnn_embeddings: torch.Tensor) -> torch.Tensor:
-          # aggregate sentence embeddings to a single document-cluster representation
-          doc_cluster_embedding = torch.mean(sentence_gnn_embeddings, dim=0, keepdim=True)
+     def forward(self, sentence_gnn_embeddings: torch.Tensor, batch: torch.Tensor) -> torch.Tensor:
+          doc_cluster_embedding = global_mean_pool(sentence_gnn_embeddings, batch)
           
           prefix_flat = self.transform(doc_cluster_embedding)
-          # Reshape to (batch_size=1, prefix_length, d_model)
           prefix = prefix_flat.view(-1, self.prefix_length, self.prefix_dim)
+          
           return prefix
      
 class LongTextEncoderEnhanced(nn.Module):
@@ -184,51 +184,69 @@ class LongTextEncoderEnhanced(nn.Module):
      It does this by chunking the text, getting embeddings for each chunk,
      and then using a compressor to create a single fixed-size representation.
      """
-     def __init__(self, t5_model_name: str, tokenizer: T5Tokenizer, target_len: int = 512, chunk_size: int = 400, stride: int = 200):
+     def __init__(self, t5_model_name: str, tokenizer: T5Tokenizer, target_len: int = 512, chunk_size: int = 400, stride: int = 128):
           super().__init__()
           self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
           self.encoder = T5EncoderModel.from_pretrained(t5_model_name).to(self.device)
           self.encoder.eval()
           for param in self.encoder.parameters():
                param.requires_grad = False
-               
+          
+          self.target_len = target_len
           self.tokenizer = tokenizer
-          self.compressor = AdaptivePoolCompressor(self.encoder.config.d_model, target_len)
+          self.compressor = nn.AdaptiveAvgPool1d(output_size=target_len)
           self.chunk_size = chunk_size
           self.stride = stride
 
      def forward(self, long_text_list: List[str]) -> torch.Tensor:
-          """ long_text_list: list of docs_text of one sample
           """
-          batch_embeddings = []
+          Handles a batch of texts, applying compression only to those that exceed the target length.
+          """
+          final_embeddings = []
+          final_masks = []
+
           for text in long_text_list:
-               # 1. Tokenize the entire long text
                token_ids = self.tokenizer.encode(text, add_special_tokens=False)
                
-               # 2. Create overlapping chunks
-               chunks = [token_ids[i:i + self.chunk_size] for i in range(0, len(token_ids), self.stride)]
-               if not chunks:
-                    chunks = [[self.tokenizer.pad_token_id]]
-               
-               chunk_tensors = self.tokenizer.pad(
-                    {"input_ids": chunks},
-                    padding="longest",
-                    return_tensors="pt"
-               )['input_ids'].to(self.device)
+               if len(token_ids) <= self.target_len:
+                    padded_ids = token_ids + [self.tokenizer.pad_token_id] * (self.target_len - len(token_ids))
+                    input_ids = torch.tensor([padded_ids], device=self.device)
 
-               # 3. Get embeddings for each chunk
-               with torch.no_grad():
-                    chunk_embeddings = self.encoder(input_ids=chunk_tensors).last_hidden_state
+                    attention_mask = torch.ones(len(token_ids), device=self.device)
+                    mask_padding = torch.zeros(self.target_len - len(token_ids), device=self.device)
+                    attention_mask = torch.cat([attention_mask, mask_padding])
+                    
+                    with torch.no_grad():
+                         embeddings = self.encoder(input_ids=input_ids).last_hidden_state.squeeze(0)
+                    
+                    final_embeddings.append(embeddings)
+                    final_masks.append(attention_mask)
 
-               # 4. Concatenate embeddings from all chunks to form one long sequence
-               full_embedding = torch.cat([emb.view(-1, emb.shape[-1]) for emb in chunk_embeddings], dim=0)
-               batch_embeddings.append(full_embedding)
+               else:
+                    chunks = [token_ids[i:i + self.chunk_size] for i in range(0, len(token_ids), self.stride)]
+                    if not chunks:
+                         chunks = [[self.tokenizer.pad_token_id]]
+                    
+                    chunk_tensors = self.tokenizer.pad(
+                         {"input_ids": chunks}, padding="longest", return_tensors="pt"
+                    )['input_ids'].to(self.device)
+
+                    with torch.no_grad():
+                         chunk_embeddings = self.encoder(input_ids=chunk_tensors).last_hidden_state
+
+                    full_embedding = torch.cat([emb.view(-1, emb.shape[-1]) for emb in chunk_embeddings], dim=0)
+                    
+                    transposed_embedding = full_embedding.unsqueeze(0).transpose(1, 2)
+                    compressed_transposed = self.compressor(transposed_embedding)
+                    # reshape: [1, emb_dim, target_len] -> [target_len, emb_dim]
+                    compressed_embedding = compressed_transposed.transpose(1, 2).squeeze(0)
+                    
+                    attention_mask = torch.ones(self.target_len, device=self.device)
+
+                    final_embeddings.append(compressed_embedding)
+                    final_masks.append(attention_mask)
+
+          batch_embeddings = torch.stack(final_embeddings)
+          batch_masks = torch.stack(final_masks)
           
-          max_len = max(emb.shape[0] for emb in batch_embeddings)
-          padded_batch = torch.stack([
-               F.pad(emb, (0, 0, 0, max_len - emb.shape[0])) for emb in batch_embeddings
-          ])
-          
-          compressed_embeddings, attention_mask = self.compressor(padded_batch)
-          
-          return compressed_embeddings, attention_mask
+          return batch_embeddings, batch_masks

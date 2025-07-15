@@ -40,7 +40,7 @@ def model_train_eval(dataset_path, learning_rate = 0.001, num_epochs = 20, gnn_b
 
 def join_train_eval(dataset_path, gnn_learning_rate = 0.001, num_epochs = 20, batch_size=16,
                     patience = 5, gnn_hidden_size = 512, accumulate_step=4, encoder_learning_rate=3e-4,
-                    sent_similarity_threshold = 0.75, gnn_out_size = 768, num_heads = 8,
+                    sent_similarity_threshold = 0.75, gnn_out_size = 768, num_heads = 8, prefix_len=10,
                     llm_learning_rates_dict = None, warmup_ratio = 0.1,
                     gnn_feat_drop=0.1, gnn_attn_drop=0.1,
                     max_summary_length = 200):
@@ -61,6 +61,7 @@ def join_train_eval(dataset_path, gnn_learning_rate = 0.001, num_epochs = 20, ba
           sent_similarity_threshold=sent_similarity_threshold,
           llm_learning_rates_dict=llm_learning_rates_dict,
           warmup_ratio=warmup_ratio,
+          prefix_len=prefix_len,
      )
      
      test_data_path = os.path.join(dataset_path, "test.jsonl")

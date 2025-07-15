@@ -143,15 +143,13 @@ def eval_join_summary(eval_data_path, max_summary_length, batch_size = 16, sent_
      
      generation_config = {
           "max_length": min(max_summary_length, 512),
-          "repetition_penalty": 1.8,
-          "no_repeat_ngram_size": 3,
-          "length_penalty": 0.9,
-          "do_sample": False,
           "num_beams": 4,
-          "diversity_penalty": 0.7,
-          "num_beam_groups": 2,
+          "no_repeat_ngram_size": 3,
           "early_stopping": True,
+          "temperature": 0.8,
           "do_sample": False,
+          "top_k": 30,
+          "top_p": 0.90,
           "bos_token_id": t5_tokenizer.bos_token_id or t5_tokenizer.pad_token_id,
           "eos_token_id": t5_tokenizer.eos_token_id
      }
@@ -180,11 +178,6 @@ def eval_join_summary(eval_data_path, max_summary_length, batch_size = 16, sent_
           
           print(f"Finish Summary Generation, time cost:  {time.time() - eval_start_time:.4f} s.")
 
-          rouge_score_dict = get_rouge_score(generated_refer_summary_pair_list=generated_refer_summary_pair_list)
-          bert_score = get_bert_score(generated_refer_summary_pair_list=generated_refer_summary_pair_list)
-          infor_score = get_infor_score(original_sents_list, generated_refer_summary_pair_list)
-          print(f"Finish Evaluation, time cost:  {time.time() - eval_start_time:.4f} s.")
-          
           #### Save generated summary for human check
           summary_saved_path = os.path.join("/","content", "drive", "MyDrive", "saved_summary_sample")
           os.makedirs(summary_saved_path, exist_ok=True)
@@ -208,7 +201,13 @@ def eval_join_summary(eval_data_path, max_summary_length, batch_size = 16, sent_
                     writer.writerow([i, ref.replace("\n", " "), gen.replace("\n", " ")])
           
           print(f"The sample summary file has saved in {summary_saved_path}")
-
+          
+          #### metrics calculation
+          rouge_score_dict = get_rouge_score(generated_refer_summary_pair_list=generated_refer_summary_pair_list)
+          bert_score = get_bert_score(generated_refer_summary_pair_list=generated_refer_summary_pair_list)
+          infor_score = get_infor_score(original_sents_list, generated_refer_summary_pair_list)
+          print(f"Finish Evaluation, time cost:  {time.time() - eval_start_time:.4f} s.")
+          
      except Exception as e:
           raise e
      
@@ -228,7 +227,7 @@ def generate_summary_with_prefix_model(model: JointOrchestratorwithPrefix,
      source_embeds, source_mask = model.long_text_encoder(source_text_list)
      
      sentence_graph_embs, _ = model.gnn(batched_graph)
-     prefix_embeds = model.prefix_encoder(sentence_graph_embs)
+     prefix_embeds = model.prefix_encoder(sentence_graph_embs, batched_graph['sentence'].batch)
 
      batch_size = source_embeds.shape[0]
      full_input_embeds = torch.cat([prefix_embeds.expand(batch_size, -1, -1), source_embeds], dim=1)

@@ -244,6 +244,10 @@ def run_join(args_list=None):
                          default=200,
                          help='Max size of summary.')
      
+     parser.add_argument('--prefix-len',
+                         type=int,
+                         default=10,
+                         help='Prefix Embedding size.')
      
      args = parser.parse_args(args_list)
      
@@ -261,6 +265,7 @@ def run_join(args_list=None):
      print(f"Accumulation Step:           {args.accumulate_step}")
      print(f"Early Stopping Patience:     {args.patience}")
      print(f"Sentence Similary Threshold: {args.sent_similarity_threshold}")
+     print(f"Prefix Length:               {args.prefix_len}")
      print(f"GNN Output Size:             {args.gnn_out_size}")
      print(f"GNN Num Heads:               {args.num_heads}")
      print(f"GNN Hidden Size:             {args.gnn_hidden_size}")
@@ -290,6 +295,7 @@ def run_join(args_list=None):
                gnn_feat_drop=args.gnn_feat_drop,
                gnn_attn_drop=args.gnn_attn_drop,
                max_summary_length=args.max_summary_length,
+               prefix_len=args.prefix_len,
           )
 
           print("\n--- Evaluation Complete ---")

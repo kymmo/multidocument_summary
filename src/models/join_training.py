@@ -16,7 +16,7 @@ from models.ModelFileManager import model_fm
 
 def run_joint_training(
      dataset_path, gnn_hidden_size, gnn_out_size, num_heads=8, gnn_learning_rate=0.001, num_epochs=20, 
-     gnn_feat_drop=0.1, gnn_attn_drop=0.1, batch_size = 16, PREFIX_LEN = 10, encoder_learning_rate=3e-4,
+     gnn_feat_drop=0.1, gnn_attn_drop=0.1, batch_size = 16, prefix_len = 10, encoder_learning_rate=3e-4,
      patience=5, accumulate_step=4, sent_similarity_threshold=0.6,
      llm_learning_rates_dict = None, warmup_ratio=0.1
 ):
@@ -30,8 +30,8 @@ def run_joint_training(
           
      if llm_learning_rates_dict is None:
           llm_learning_rates_dict = {
-               "shallow_layers": 1e-4,
-               "deep_layers": 5e-5,
+               "shallow_layers": 2e-5,
+               "deep_layers": 5e-6,
           }
      
      train_dataset = JointTrainingDataset(file_path=train_data_path, dataset_type=DataType.TRAIN.value, sent_similarity=sent_similarity_threshold)
@@ -71,13 +71,12 @@ def run_joint_training(
      orchestrator_model = JointOrchestratorwithPrefix(
           gnn_config=gnn_config, 
           t5_model_name= base_model_name,
-          prefix_length=PREFIX_LEN, 
+          prefix_length=prefix_len, 
           t5_tokenizer=t5_tokenizer,
      ).to(device)
 
      optimizer_grouped_parameters = [
           {"params": orchestrator_model.gnn.parameters(), "lr": gnn_learning_rate},
-          {"params": orchestrator_model.long_text_encoder.compressor.parameters(), "lr": encoder_learning_rate},
           {"params": orchestrator_model.prefix_encoder.parameters(), "lr": encoder_learning_rate},
           {"params": orchestrator_model.custom_t5.encoder.block[-2:].parameters(), "lr": llm_learning_rates_dict["shallow_layers"]},
           {"params": orchestrator_model.custom_t5.decoder.block[-2:].parameters(), "lr": llm_learning_rates_dict["shallow_layers"]},
@@ -136,14 +135,14 @@ def run_joint_training(
           optimizer.zero_grad()
           
           for batch_idx, batch in tqdm(enumerate(train_dataloader), total=len(train_dataloader), desc=f"Epoch {epoch}"):
-               with torch.cuda.amp.autocast(enabled=False):
+               with torch.cuda.amp.autocast():
                     outputs = orchestrator_model(
                          source_text_list = batch['sample_text_list'],
                          batched_graph = batch['batched_graph'].to(device),
                          label_summaries = batch['label_summaries'],
                     )
                     loss = outputs.loss
-
+                    
                     if torch.isnan(loss):
                          print(f"[Warning] NaN loss at batch {batch_idx}. Skipping update.")
                          scaler.zero_grad(set_to_none=True)
@@ -179,7 +178,7 @@ def run_joint_training(
           with torch.no_grad():
                for val_batch_id, val_batch in tqdm(enumerate(val_dataloader), total=len(val_dataloader), desc=f"Epoch {epoch}"):
                     
-                    with torch.cuda.amp.autocast(enabled=False):
+                    with torch.cuda.amp.autocast():
                          val_outputs = orchestrator_model(
                               source_text_list = val_batch['sample_text_list'],
                               batched_graph = val_batch['batched_graph'].to(device),
@@ -226,7 +225,7 @@ def run_joint_training(
           final_model = JointOrchestratorwithPrefix(
                gnn_config=gnn_config, 
                t5_model_name= base_model_name,
-               prefix_length=PREFIX_LEN, 
+               prefix_length=prefix_len, 
                t5_tokenizer=t5_tokenizer,
           ).to(device)
           final_model.load_state_dict(best_checkpoint['orchestrator_model_state'])
