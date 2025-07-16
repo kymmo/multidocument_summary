@@ -91,7 +91,7 @@ def run_joint_training(
           num_cycles=1.0,
           last_epoch=-1,
      )
-     scaler = torch.cuda.amp.GradScaler(enabled=True)
+     scaler = torch.cuda.amp.GradScaler(init_scale=1024)
 
      ckpt_mgr = ModelCheckpointManager(stage_name="orchestrator_model")
      early_stopper = EarlyStopper(patience=patience, min_delta= 0.001, checkpoint_manager=ckpt_mgr)
@@ -135,20 +135,19 @@ def run_joint_training(
           optimizer.zero_grad()
           
           for batch_idx, batch in tqdm(enumerate(train_dataloader), total=len(train_dataloader), desc=f"Epoch {epoch}"):
-               with torch.cuda.amp.autocast():
-                    outputs = orchestrator_model(
-                         source_text_list = batch['sample_text_list'],
-                         batched_graph = batch['batched_graph'].to(device),
-                         label_summaries = batch['label_summaries'],
-                    )
-                    loss = outputs.loss
-                    
-                    if torch.isnan(loss):
-                         print(f"[Warning] NaN loss at batch {batch_idx}. Skipping update.")
-                         scaler.zero_grad(set_to_none=True)
-                         continue
+               # with torch.cuda.amp.autocast():
+               outputs = orchestrator_model(
+                    source_text_list = batch['sample_text_list'],
+                    batched_graph = batch['batched_graph'].to(device),
+                    label_summaries = batch['label_summaries'],
+               )
+               loss = outputs.loss
+               
+               if torch.isnan(loss):
+                    print(f"[Warning] NaN loss at batch {batch_idx}. Skipping update.")
+                    continue
 
-                    scaled_loss = loss / accumulate_step
+               scaled_loss = loss / accumulate_step
 
                scaler.scale(scaled_loss).backward()
                total_loss += loss.item()
@@ -177,16 +176,15 @@ def run_joint_training(
           num_val_batches = 0
           with torch.no_grad():
                for val_batch_id, val_batch in tqdm(enumerate(val_dataloader), total=len(val_dataloader), desc=f"Epoch {epoch}"):
-                    
-                    with torch.cuda.amp.autocast():
-                         val_outputs = orchestrator_model(
-                              source_text_list = val_batch['sample_text_list'],
-                              batched_graph = val_batch['batched_graph'].to(device),
-                              label_summaries = val_batch['label_summaries'],
-                         )
+                    # with torch.cuda.amp.autocast():
+                    val_outputs = orchestrator_model(
+                         source_text_list = val_batch['sample_text_list'],
+                         batched_graph = val_batch['batched_graph'].to(device),
+                         label_summaries = val_batch['label_summaries'],
+                    )
 
-                         total_val_loss += val_outputs.loss.item()
-                         num_val_batches += 1
+                    total_val_loss += val_outputs.loss.item()
+                    num_val_batches += 1
                          
           avg_val_loss = total_val_loss / num_val_batches if num_val_batches > 0 else 0
           val_losses.append(avg_val_loss)

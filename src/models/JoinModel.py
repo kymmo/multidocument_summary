@@ -217,6 +217,9 @@ class JointOrchestratorwithPrefix(nn.Module):
           batched_graph = batched_graph.to(self.device)
           
           source_embeds, source_mask = self.long_text_encoder(source_text_list)
+          if torch.isnan(source_embeds).any() or torch.isinf(source_embeds).any():
+               print("[WARNING] source_embeds contains NaN/Inf!")
+          
           source_embeds = source_embeds.to(self.device)
           source_embeds.requires_grad_(True)
           source_mask = source_mask.to(self.device)
