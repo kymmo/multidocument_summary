@@ -168,23 +168,22 @@ class CustomT5WithPrefix(T5ForConditionalGeneration):
           **kwargs,
      ):
           is_encoder_pass = "encoder_outputs" not in kwargs or kwargs.get("encoder_outputs") is None
-################ test
-          # if is_encoder_pass:
-          #      if inputs_embeds is None:
-          #           raise ValueError("`inputs_embeds` must be provided for the initial encoder pass.")
+          if is_encoder_pass:
+               if inputs_embeds is None:
+                    raise ValueError("`inputs_embeds` must be provided for the initial encoder pass.")
 
-          #      batch_size = inputs_embeds.shape[0]
+               batch_size = inputs_embeds.shape[0]
 
-          #      if prefix_embeds is not None:
-          #           prefix_length = prefix_embeds.shape[1]
-          #           if prefix_embeds.shape[0] != batch_size:
-          #                prefix_embeds = prefix_embeds.expand(batch_size, -1, -1)
+               if prefix_embeds is not None:
+                    prefix_length = prefix_embeds.shape[1]
+                    if prefix_embeds.shape[0] != batch_size:
+                         prefix_embeds = prefix_embeds.expand(batch_size, -1, -1)
                     
-          #           inputs_embeds = torch.cat([prefix_embeds, inputs_embeds], dim=1)
+                    inputs_embeds = torch.cat([prefix_embeds, inputs_embeds], dim=1)
                     
-          #           if attention_mask is not None:
-          #                prefix_attention_mask = torch.ones(batch_size, prefix_length, device=attention_mask.device)
-          #                attention_mask = torch.cat([prefix_attention_mask, attention_mask], dim=1)
+                    if attention_mask is not None:
+                         prefix_attention_mask = torch.ones(batch_size, prefix_length, device=attention_mask.device)
+                         attention_mask = torch.cat([prefix_attention_mask, attention_mask], dim=1)
 
           return super().forward(
                inputs_embeds=inputs_embeds,
