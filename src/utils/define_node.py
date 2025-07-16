@@ -29,7 +29,7 @@ os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 NLP_MODEL_NAME = "en_core_web_lg"
 SENT_MODEL_NAME = "all-mpnet-base-v2"
-WORKER_NLP_BATCH_SIZE = 50 # for spacy docs process
+WORKER_NLP_BATCH_SIZE = 100 # for spacy docs process
 WORKER_TASK_BATCH_SIZE = 20 # for each subprocess
 
 # These will hold the models loaded *within each subprocess*
@@ -533,7 +533,7 @@ def compute_edges_similarity_ann(sentence_texts, threshold, EMB_BATCH_SIZE=32):
      edges = []
      try:
           index.add(embeddings_np)
-          k = min(128, n_sents)
+          k = min(64, n_sents)
           batch_size_search = min(32, n_sents)
           D_list = []
           I_list = []
@@ -619,7 +619,6 @@ def define_node_edge_opt_parallel(documents_list, edge_similarity_threshold=0.6)
      ) as executor:
           futures = [executor.submit(process_batch, task_batch) for task_batch in tasks]
 
-          # for future in concurrent.futures.as_completed(futures):
           for future in tqdm(
                concurrent.futures.as_completed(futures),
                total=len(futures),
