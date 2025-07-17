@@ -7,6 +7,7 @@ import matplotlib.pyplot as plt
 from collections import defaultdict
 from rouge_score.scoring import Score
 import multiprocessing
+from functools import lru_cache
 
 from models.CheckPointManager import parent_path
 from models.EmbeddingCompress import AdaptivePoolCompressor
@@ -23,12 +24,14 @@ def freeze_model(model):
 def unfreeze_model(model):
      for param in model.parameters():
           param.requires_grad = True
-          
-def rouge_eval(reference_list, generated_list):
-     scorer = rouge_scorer.RougeScorer(["rouge1", "rouge2", "rougeL"], use_stemmer=True)
-     scores = [scorer.score(ref, gen) for ref, gen in zip(reference_list, generated_list)]
 
-     return scores
+@lru_cache(maxsize=1000)
+def cached_rouge_score(reference, generated):
+     scorer = rouge_scorer.RougeScorer(["rouge1", "rouge2", "rougeL"], use_stemmer=True)
+     return scorer.score(reference, generated)
+
+def rouge_eval(reference_list, generated_list):
+     return [cached_rouge_score(ref, gen) for ref, gen in zip(reference_list, generated_list)]
 
 def merge_dicts(list_of_dicts):
      averages = defaultdict(lambda: {'precision': [], 'recall': [], 'fmeasure': []})

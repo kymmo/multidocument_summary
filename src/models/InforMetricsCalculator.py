@@ -11,6 +11,7 @@ logging.getLogger('bm25s').setLevel(logging.WARNING)
 logging.getLogger("transformers").setLevel(logging.ERROR)
 logging.getLogger("rouge_scorer").setLevel(logging.CRITICAL)
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
+os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] = "1"
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -83,7 +84,7 @@ class InforMetricsCalculator:
                stemmer=self.stemmer
           )
 
-          retriever = bm25s.BM25(corpus=cleaned_doc_sents)
+          retriever = bm25s.BM25(corpus=cleaned_doc_sents, show_progress=False)
           retriever.index(corpus_tokens)
           
           gen_ent, gen_contra = self._retrieve_and_nli(retriever, gen_summary_sents)
@@ -174,7 +175,7 @@ class InforMetricsCalculator:
                stopwords=self.sw,
                stemmer=self.stemmer
           )
-          gen_retriever = bm25s.BM25(corpus=gen_sents)
+          gen_retriever = bm25s.BM25(corpus=gen_sents, show_progress=False)
           gen_retriever.index(gen_tokens)
           
           covered_count = 0
