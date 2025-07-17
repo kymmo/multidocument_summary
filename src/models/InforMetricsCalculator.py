@@ -5,11 +5,7 @@ from transformers import AutoTokenizer, AutoModelForSequenceClassification
 import spacy
 import logging
 import os
-logging.getLogger().setLevel(logging.CRITICAL)
 
-logging.getLogger('bm25s').setLevel(logging.WARNING)
-logging.getLogger("transformers").setLevel(logging.ERROR)
-logging.getLogger("rouge_scorer").setLevel(logging.CRITICAL)
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] = "1"
 
@@ -31,6 +27,10 @@ class InforMetricsCalculator:
           self.ENTAIL_THRESHOLD = ENTAIL_THRESHOLD
           self.WEAK_HALLU_MIN = WEAK_HALLU_MIN
           self.WEAK_HALLU_MAX = WEAK_HALLU_MAX
+          
+          logging.getLogger('bm25s').setLevel(logging.WARNING)
+          logging.getLogger("transformers").setLevel(logging.ERROR)
+          logging.getLogger("rouge_scorer").setLevel(logging.CRITICAL)
 
      def _get_infor_metrics(self, doc_list, gen_summary_list, ref_summary_list, BATCH_SIZE = 3):
           """
@@ -84,7 +84,7 @@ class InforMetricsCalculator:
                stemmer=self.stemmer
           )
 
-          retriever = bm25s.BM25(corpus=cleaned_doc_sents, show_progress=False)
+          retriever = bm25s.BM25(corpus=cleaned_doc_sents)
           retriever.index(corpus_tokens)
           
           gen_ent, gen_contra = self._retrieve_and_nli(retriever, gen_summary_sents)
@@ -108,7 +108,7 @@ class InforMetricsCalculator:
                stopwords=self.sw,
                stemmer=self.stemmer
           )
-          results, scores = retriever.retrieve(q_tokens, k=min(self.TOP_K, len(retriever.corpus)))
+          results, scores = retriever.retrieve(q_tokens, k=min(self.TOP_K, len(retriever.corpus)), show_progress=False)
           
           max_entail_probs = []
           max_contradiction_probs = []
@@ -175,7 +175,7 @@ class InforMetricsCalculator:
                stopwords=self.sw,
                stemmer=self.stemmer
           )
-          gen_retriever = bm25s.BM25(corpus=gen_sents, show_progress=False)
+          gen_retriever = bm25s.BM25(corpus=gen_sents)
           gen_retriever.index(gen_tokens)
           
           covered_count = 0

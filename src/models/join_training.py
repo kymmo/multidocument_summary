@@ -78,8 +78,8 @@ def run_joint_training(
      optimizer_grouped_parameters = [
           {"params": orchestrator_model.gnn.parameters(), "lr": gnn_learning_rate},
           {"params": orchestrator_model.prefix_encoder.parameters(), "lr": encoder_learning_rate},
-          {"params": orchestrator_model.custom_t5.encoder.block[-2:].parameters(), "lr": llm_learning_rates_dict["shallow_layers"]},
-          {"params": orchestrator_model.custom_t5.decoder.block[-2:].parameters(), "lr": llm_learning_rates_dict["shallow_layers"]},
+          # {"params": orchestrator_model.custom_t5.encoder.block[-2:].parameters(), "lr": llm_learning_rates_dict["shallow_layers"]},
+          # {"params": orchestrator_model.custom_t5.decoder.block[-2:].parameters(), "lr": llm_learning_rates_dict["shallow_layers"]},
      ]
      optimizer = torch.optim.AdamW(optimizer_grouped_parameters, weight_decay=0.01)
      num_update_steps_per_epoch = math.ceil(len(train_dataloader) / accumulate_step)

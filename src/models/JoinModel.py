@@ -193,19 +193,19 @@ class JointOrchestratorwithPrefix(nn.Module):
                param.requires_grad = False
                               
           # Unfreeze the trainable components
-          for param in self.gnn.parameters(): 
+          for param in self.gnn.parameters():
                param.requires_grad = True
           
-          for param in self.prefix_encoder.parameters(): 
+          for param in self.prefix_encoder.parameters():
                param.requires_grad = True
                
           # Unfreeze top layers of T5
-          for layer in self.custom_t5.encoder.block[-2:]:
-               for param in layer.parameters():
-                    param.requires_grad = True
-          for layer in self.custom_t5.decoder.block[-2:]:
-               for param in layer.parameters():
-                    param.requires_grad = True
+          # for layer in self.custom_t5.encoder.block[-2:]:
+          #      for param in layer.parameters():
+          #           param.requires_grad = True
+          # for layer in self.custom_t5.decoder.block[-2:]:
+          #      for param in layer.parameters():
+          #           param.requires_grad = True
 
      def forward(self, source_text_list: List[str], batched_graph, label_summaries: List[str], **kwargs):
           """
