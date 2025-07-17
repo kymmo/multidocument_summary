@@ -65,6 +65,6 @@ def join_train_eval(dataset_path, gnn_learning_rate = 0.001, num_epochs = 20, ba
      )
      
      test_data_path = os.path.join(dataset_path, "test.jsonl")
-     scores_dict = eval_join_summary(test_data_path, max_summary_length = max_summary_length, sent_similarity=sent_similarity_threshold)
+     scores_dict = eval_join_summary(test_data_path, batch_size=batch_size, max_summary_length = max_summary_length, sent_similarity=sent_similarity_threshold)
 
      return scores_dict

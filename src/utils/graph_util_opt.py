@@ -330,7 +330,7 @@ def embed_nodes_with_rel_pos(graphs, word_emb_batch_size=64, sentence_emb_batch_
                     
                          del all_word_embeddings
                     else:
-                         print(f"\nWarning: No word embeddings generated for graph {i} (List was empty).")
+                         print(f"[Warning] No word embeddings generated for graph {i}.")
 
                     # --- Assign Embeddings to Graph Nodes ---
                     for node_id, node_data in graph.nodes(data=True):
