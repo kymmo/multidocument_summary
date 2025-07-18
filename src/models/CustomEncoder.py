@@ -3,7 +3,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 from typing import List
 from transformers import T5Config, T5Tokenizer, T5EncoderModel
-from torch_geometric.nn import global_mean_pool
+from torch_geometric.nn import global_mean_pool, GlobalAttention
+from torch.nn import Sequential, Linear, ReLU
 
 from models.EmbeddingCompress import AdaptivePoolCompressor
 
@@ -165,14 +166,21 @@ class PrefixEncoder(nn.Module):
           super().__init__()
           self.prefix_length = prefix_length
           self.prefix_dim = config.d_model
+
+          gate_nn = Sequential(
+               Linear(gnn_out_size, gnn_out_size // 2),
+               ReLU(),
+               Linear(gnn_out_size // 2, 1)
+          )
           
+          self.attention_pooling = GlobalAttention(gate_nn=gate_nn)
           self.transform = nn.Sequential(
                nn.Linear(gnn_out_size, self.prefix_dim * self.prefix_length),
           )
 
      def forward(self, sentence_gnn_embeddings: torch.Tensor, batch: torch.Tensor) -> torch.Tensor:
-          doc_cluster_embedding = global_mean_pool(sentence_gnn_embeddings, batch)
-          
+          doc_cluster_embedding = self.attention_pooling(sentence_gnn_embeddings, batch)
+
           prefix_flat = self.transform(doc_cluster_embedding)
           prefix = prefix_flat.view(-1, self.prefix_length, self.prefix_dim)
           
@@ -194,59 +202,38 @@ class LongTextEncoderEnhanced(nn.Module):
           
           self.target_len = target_len
           self.tokenizer = tokenizer
-          self.compressor = nn.AdaptiveAvgPool1d(output_size=target_len)
+          self.compressor = AdaptivePoolCompressor(self.encoder.config.d_model, target_len)
           self.chunk_size = chunk_size
           self.stride = stride
 
      def forward(self, long_text_list: List[str]) -> torch.Tensor:
+          """ long_text_list: list of docs_text of one sample
           """
-          Handles a batch of texts, applying compression only to those that exceed the target length.
-          """
-          final_embeddings = []
-          final_masks = []
-
+          batch_embeddings = []
           for text in long_text_list:
                token_ids = self.tokenizer.encode(text, add_special_tokens=False)
                
-               if len(token_ids) <= self.target_len:
-                    padded_ids = token_ids + [self.tokenizer.pad_token_id] * (self.target_len - len(token_ids))
-                    input_ids = torch.tensor([padded_ids], device=self.device)
+               chunks = [token_ids[i:i + self.chunk_size] for i in range(0, len(token_ids), self.stride)]
+               if not chunks:
+                    chunks = [[self.tokenizer.pad_token_id]]
+               
+               chunk_tensors = self.tokenizer.pad(
+                    {"input_ids": chunks},
+                    padding="longest",
+                    return_tensors="pt"
+               )['input_ids'].to(self.device)
 
-                    attention_mask = torch.ones(len(token_ids), device=self.device)
-                    mask_padding = torch.zeros(self.target_len - len(token_ids), device=self.device)
-                    attention_mask = torch.cat([attention_mask, mask_padding])
-                    
-                    with torch.no_grad():
-                         embeddings = self.encoder(input_ids=input_ids).last_hidden_state.squeeze(0)
-                    
-                    final_embeddings.append(embeddings)
-                    final_masks.append(attention_mask)
+               with torch.no_grad():
+                    chunk_embeddings = self.encoder(input_ids=chunk_tensors).last_hidden_state
 
-               else:
-                    chunks = [token_ids[i:i + self.chunk_size] for i in range(0, len(token_ids), self.stride)]
-                    if not chunks:
-                         chunks = [[self.tokenizer.pad_token_id]]
-                    
-                    chunk_tensors = self.tokenizer.pad(
-                         {"input_ids": chunks}, padding="longest", return_tensors="pt"
-                    )['input_ids'].to(self.device)
-
-                    with torch.no_grad():
-                         chunk_embeddings = self.encoder(input_ids=chunk_tensors).last_hidden_state
-
-                    full_embedding = torch.cat([emb.view(-1, emb.shape[-1]) for emb in chunk_embeddings], dim=0)
-                    
-                    transposed_embedding = full_embedding.unsqueeze(0).transpose(1, 2)
-                    compressed_transposed = self.compressor(transposed_embedding)
-                    # reshape: [1, emb_dim, target_len] -> [target_len, emb_dim]
-                    compressed_embedding = compressed_transposed.transpose(1, 2).squeeze(0)
-                    
-                    attention_mask = torch.ones(self.target_len, device=self.device)
-
-                    final_embeddings.append(compressed_embedding)
-                    final_masks.append(attention_mask)
-
-          batch_embeddings = torch.stack(final_embeddings)
-          batch_masks = torch.stack(final_masks)
+               full_embedding = torch.cat([emb.view(-1, emb.shape[-1]) for emb in chunk_embeddings], dim=0)
+               batch_embeddings.append(full_embedding)
           
-          return batch_embeddings, batch_masks
+          max_len = max(emb.shape[0] for emb in batch_embeddings)
+          padded_batch = torch.stack([
+               F.pad(emb, (0, 0, 0, max_len - emb.shape[0])) for emb in batch_embeddings
+          ])
+          
+          compressed_embeddings, attention_mask = self.compressor(padded_batch)
+          
+          return compressed_embeddings, attention_mask

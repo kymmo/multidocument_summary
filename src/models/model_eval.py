@@ -143,13 +143,15 @@ def eval_join_summary(eval_data_path, max_summary_length, batch_size = 16, sent_
      
      generation_config = {
           "max_length": min(max_summary_length, 512),
-          "num_beams": 4,
+          "repetition_penalty": 1.8,
           "no_repeat_ngram_size": 3,
+          "length_penalty": 0.9,
+          "do_sample": False,
+          "num_beams": 4,
+          "diversity_penalty": 0.7,
+          "num_beam_groups": 2,
           "early_stopping": True,
-          # "temperature": 0.8,
-          "do_sample": True,
-          "top_k": 30,
-          "top_p": 0.90,
+          "do_sample": False,
           "bos_token_id": t5_tokenizer.bos_token_id or t5_tokenizer.pad_token_id,
           "eos_token_id": t5_tokenizer.eos_token_id
      }

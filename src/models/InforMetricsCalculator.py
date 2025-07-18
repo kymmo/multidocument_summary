@@ -6,6 +6,8 @@ import spacy
 import logging
 import os
 
+torch.backends.cudnn.benchmark = False
+
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] = "1"
 

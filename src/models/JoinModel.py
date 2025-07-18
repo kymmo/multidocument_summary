@@ -2,8 +2,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from typing import List
-import os
-import json
 from transformers import T5Config, T5ForConditionalGeneration, T5Tokenizer
 
 from models.RelHetGraph import RelHetGraph
@@ -200,12 +198,12 @@ class JointOrchestratorwithPrefix(nn.Module):
                param.requires_grad = True
                
           # Unfreeze top layers of T5
-          # for layer in self.custom_t5.encoder.block[-2:]:
-          #      for param in layer.parameters():
-          #           param.requires_grad = True
-          # for layer in self.custom_t5.decoder.block[-2:]:
-          #      for param in layer.parameters():
-          #           param.requires_grad = True
+          for layer in self.custom_t5.encoder.block[-2:]:
+               for param in layer.parameters():
+                    param.requires_grad = True
+          for layer in self.custom_t5.decoder.block[-2:]:
+               for param in layer.parameters():
+                    param.requires_grad = True
 
      def forward(self, source_text_list: List[str], batched_graph, label_summaries: List[str], **kwargs):
           """
