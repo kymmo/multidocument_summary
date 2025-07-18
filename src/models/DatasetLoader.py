@@ -105,7 +105,8 @@ def joint_collate_fn(batch):
      for graph in graph_list:
           sent_texts = graph['sentence'].text
           
-          sample_text = " ".join(sent_texts)
+          separator = " </s> "
+          sample_text = separator.join(sent_texts)
           text_list.append(sample_text)
      
      
