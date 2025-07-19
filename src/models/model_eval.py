@@ -143,17 +143,18 @@ def eval_join_summary(eval_data_path, max_summary_length, batch_size = 16, sent_
      
      generation_config = {
           "max_length": min(max_summary_length, 512),
-          "repetition_penalty": 1.8,
+          "repetition_penalty": 2,
           "no_repeat_ngram_size": 3,
           "length_penalty": 0.9,
           "do_sample": False,
-          "num_beams": 4,
+          "num_beams": 6,
           "diversity_penalty": 0.7,
-          "num_beam_groups": 2,
+          "num_beam_groups": 3,
           "early_stopping": True,
           "do_sample": False,
           "bos_token_id": t5_tokenizer.bos_token_id or t5_tokenizer.pad_token_id,
-          "eos_token_id": t5_tokenizer.eos_token_id
+          "eos_token_id": t5_tokenizer.eos_token_id,
+          "force_words_ids": [t5_tokenizer("Summary:", add_special_tokens=False).input_ids],
      }
      
      print("Start evaluation...")

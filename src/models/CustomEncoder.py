@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from typing import List
 from transformers import T5Config, T5Tokenizer, T5EncoderModel
-from torch_geometric.nn import global_mean_pool, GlobalAttention
+from torch_geometric.nn import global_mean_pool, AttentionalAggregation
 from torch.nn import Sequential, Linear, ReLU
 
 from models.EmbeddingCompress import AdaptivePoolCompressor
@@ -173,7 +173,7 @@ class PrefixEncoder(nn.Module):
                Linear(gnn_out_size // 2, 1)
           )
           
-          self.attention_pooling = GlobalAttention(gate_nn=gate_nn)
+          self.attention_pooling = AttentionalAggregation(gate_nn=gate_nn)
           self.transform = nn.Sequential(
                nn.Linear(gnn_out_size, self.prefix_dim * self.prefix_length),
           )
