@@ -154,7 +154,7 @@ def eval_join_summary(eval_data_path, max_summary_length, batch_size = 16, sent_
           "do_sample": False,
           "bos_token_id": t5_tokenizer.bos_token_id or t5_tokenizer.pad_token_id,
           "eos_token_id": t5_tokenizer.eos_token_id,
-          "force_words_ids": [t5_tokenizer("Summary:", add_special_tokens=False).input_ids],
+          # "force_words_ids": [t5_tokenizer("Summary:", add_special_tokens=False).input_ids],
      }
      
      print("Start evaluation...")
