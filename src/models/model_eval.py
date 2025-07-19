@@ -143,7 +143,7 @@ def eval_join_summary(eval_data_path, max_summary_length, batch_size = 16, sent_
      
      generation_config = {
           "max_length": min(max_summary_length, 512),
-          "repetition_penalty": 2,
+          "repetition_penalty": 2.0,
           "no_repeat_ngram_size": 3,
           "length_penalty": 0.9,
           "do_sample": False,
