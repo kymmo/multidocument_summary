@@ -13,7 +13,7 @@ class EarlyStopper:
           
           self.checkpoint_manager = checkpoint_manager
 
-     def __call__(self, val_loss, epoch, models, optimizers, schedulers, scaler, global_step = None,
+     def __call__(self, val_loss, epoch, models, optimizers, schedulers, scaler,
                     train_losses_history=None, val_losses_history=None):
           if val_loss < self.best_loss - self.min_delta:
                self.best_loss = val_loss
@@ -33,8 +33,6 @@ class EarlyStopper:
                     'is_best': True,
                     'early_stopper_state': best_state_to_save
                }
-               if global_step is not None:
-                    save_kwargs['global_step'] = global_step
 
                if train_losses_history is not None: save_kwargs['train_losses'] = train_losses_history
                if val_losses_history is not None: save_kwargs['val_losses'] = val_losses_history

@@ -23,8 +23,9 @@ import logging
 logging.getLogger().setLevel(logging.ERROR)
 
 base_model = "t5-base"
+# base_model = "t5-small"
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-t5_tokenizer = T5TokenizerFast.from_pretrained("t5-base")
+t5_tokenizer = T5TokenizerFast.from_pretrained(base_model)
 t5_model = T5ForConditionalGeneration.from_pretrained(base_model, use_cache=False).to(device)
 t5_model.gradient_checkpointing_enable()
 
@@ -144,12 +145,12 @@ def eval_join_summary(eval_data_path, max_summary_length, batch_size = 16, sent_
      generation_config = {
           "max_length": min(max_summary_length, 512),
           "repetition_penalty": 2.0,
-          "no_repeat_ngram_size": 3,
+          "no_repeat_ngram_size": 2,
           "length_penalty": 0.9,
           "do_sample": False,
-          "num_beams": 6,
+          "num_beams": 4,
           "diversity_penalty": 0.7,
-          "num_beam_groups": 3,
+          "num_beam_groups": 2,
           "early_stopping": True,
           "do_sample": False,
           "bos_token_id": t5_tokenizer.bos_token_id or t5_tokenizer.pad_token_id,

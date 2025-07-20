@@ -22,7 +22,8 @@ def run_joint_training(
 ):
 
      device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-     base_model_name = "google-t5/t5-base"
+     base_model_name = "t5-base"
+     # base_model_name = "t5-small"
      train_data_path = os.path.join(dataset_path, "train.jsonl")
      val_data_path = os.path.join(dataset_path, "validation.jsonl")
      if not Path(train_data_path).exists() or not Path(val_data_path).exists():
@@ -70,7 +71,7 @@ def run_joint_training(
      
      orchestrator_model = JointOrchestratorwithPrefix(
           gnn_config=gnn_config, 
-          t5_model_name= base_model_name,
+          t5_model_name=base_model_name,
           prefix_length=prefix_len, 
           t5_tokenizer=t5_tokenizer,
      ).to(device)
@@ -92,12 +93,11 @@ def run_joint_training(
           last_epoch=-1,
      )
      scaler = torch.cuda.amp.GradScaler(init_scale=1024)
-
+     
      ckpt_mgr = ModelCheckpointManager(stage_name="orchestrator_model")
      early_stopper = EarlyStopper(patience=patience, min_delta= 0.001, checkpoint_manager=ckpt_mgr)
      resume = False
      start_epoch = 0
-     global_step = 0
      train_losses = [] # list to store training losses for plotting
      val_losses = []
      if (checkpoint := ckpt_mgr.load(device)) is not None:
@@ -109,7 +109,6 @@ def run_joint_training(
                scaler.load_state_dict(checkpoint['scaler'])
           
           start_epoch = checkpoint['epoch'] + 1
-          global_step = checkpoint.get('global_step', 0)
           resume = True
 
           if 'early_stopper_state' in checkpoint and checkpoint['early_stopper_state']:
@@ -140,6 +139,7 @@ def run_joint_training(
                     source_text_list = batch['sample_text_list'],
                     batched_graph = batch['batched_graph'].to(device),
                     label_summaries = batch['label_summaries'],
+                    cov_lambda=adjust_cov_lambda(epoch, num_epochs),
                )
                loss = outputs.loss
                
@@ -159,11 +159,6 @@ def run_joint_training(
                     scheduler.step()
                     optimizer.zero_grad(set_to_none=True)
                     
-                    global_step += 1
-                    if global_step % 100 == 0:
-                         lr_strings = [f"{lr:.8f}" for lr in scheduler.get_last_lr()]
-                         print(f"[Batch Update] Batch {batch_idx}, Global Step: {global_step}, Learning Rates: {lr_strings}")
-                              
           avg_train_loss = total_loss / processed_batches_this_epoch if processed_batches_this_epoch > 0 else 0
           train_losses.append(avg_train_loss)
           current_lrs = scheduler.get_last_lr()
@@ -181,6 +176,7 @@ def run_joint_training(
                          source_text_list = val_batch['sample_text_list'],
                          batched_graph = val_batch['batched_graph'].to(device),
                          label_summaries = val_batch['label_summaries'],
+                         cov_lambda=adjust_cov_lambda(epoch, num_epochs),
                     )
 
                     total_val_loss += val_outputs.loss.item()
@@ -196,7 +192,7 @@ def run_joint_training(
           schedulers_to_save = {'scheduler': scheduler}
           
           early_stop_check = early_stopper(avg_val_loss, epoch, models_to_save, optimizers_to_save, 
-                         schedulers_to_save, scaler, global_step,
+                         schedulers_to_save, scaler,
                          train_losses_history=train_losses, val_losses_history=val_losses)
           
           ckpt_path = ckpt_mgr.save(
@@ -205,7 +201,6 @@ def run_joint_training(
                optimizers=optimizers_to_save,
                schedulers=schedulers_to_save,
                scaler=scaler,
-               global_step=global_step,
                early_stopper_state=early_stopper.get_state(),
                train_losses=train_losses,
                val_losses=val_losses
@@ -239,3 +234,14 @@ def run_joint_training(
      print("--- Joint Training Finished! ---")
      del orchestrator_model
      clean_memory()
+     
+def adjust_cov_lambda(epoch, total_epochs):
+     if total_epochs <= 4:
+          return 0.01
+          
+     if epoch < total_epochs // 4:
+          return 0.01
+     elif epoch < total_epochs // 2:
+          return 0.03
+     else:
+          return 0.05

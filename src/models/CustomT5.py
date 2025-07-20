@@ -108,7 +108,6 @@ class CustomT5(T5ForConditionalGeneration):
                
           return inputs_embeds, attention_mask
 
-
 class ResProjector(nn.Module):
      def __init__(self, in_dim, hidden_dim, out_dim, dropout=0.1):
           super().__init__()
@@ -152,7 +151,7 @@ class CustomT5WithPrefix(T5ForConditionalGeneration):
      def __init__(self, config: T5Config):
           super().__init__(config)
           self.gradient_checkpointing_enable()
-
+          
      def get_input_embeddings(self):
           return self.shared
 
@@ -165,6 +164,7 @@ class CustomT5WithPrefix(T5ForConditionalGeneration):
           attention_mask: Optional[torch.FloatTensor] = None,
           prefix_embeds: Optional[torch.Tensor] = None,
           labels: Optional[torch.LongTensor] = None,
+          cov_lambda=None,
           **kwargs,
      ):
           is_encoder_pass = "encoder_outputs" not in kwargs or kwargs.get("encoder_outputs") is None
@@ -182,12 +182,47 @@ class CustomT5WithPrefix(T5ForConditionalGeneration):
                     inputs_embeds = torch.cat([prefix_embeds, inputs_embeds], dim=1)
                     
                     if attention_mask is not None:
-                         prefix_attention_mask = torch.ones(batch_size, prefix_length, device=attention_mask.device)
+                         prefix_attention_mask = torch.ones(
+                              batch_size, prefix_length, 
+                              device=attention_mask.device,
+                              dtype=attention_mask.dtype)
                          attention_mask = torch.cat([prefix_attention_mask, attention_mask], dim=1)
 
-          return super().forward(
+          outputs = super().forward(
                inputs_embeds=inputs_embeds,
                attention_mask=attention_mask,
                labels=labels,
+               output_attentions=True,
                **kwargs,
           )
+          
+          if cov_lambda is not None and labels is not None:
+               ce_loss = outputs.loss  # token-level cross-entropy
+               attn_layers = outputs.decoder_attentions
+               last_layer_attn = attn_layers[-1].mean(dim=1)  # [batch, tgt_len, src_len]
+
+               cov_loss = calculate_coverage_loss(last_layer_attn)
+               loss = ce_loss + cov_lambda * cov_loss
+               
+               ####33test
+               print(f"loss: {ce_loss.item():.4f} + {cov_lambda * cov_loss.item():.4f} = {loss.item():.4f}")
+               #################
+
+               outputs.loss = loss
+          
+          return outputs
+     
+     
+def calculate_coverage_loss(attentions, epsilon=1e-8):
+     batch_size, tgt_len, src_len = attentions.shape
+     coverage = torch.zeros(batch_size, src_len, device=attentions.device)
+     
+     cov_loss = 0.0
+     for t in range(tgt_len):
+          a_t = attentions[:, t, :]
+          penalty = torch.exp(-coverage) * a_t
+          cov_loss += penalty.sum(dim=1) / (t + 1)
+     
+     cov_loss = cov_loss.mean() / (tgt_len + epsilon)
+     
+     return cov_loss

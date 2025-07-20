@@ -205,7 +205,8 @@ class JointOrchestratorwithPrefix(nn.Module):
                for param in layer.parameters():
                     param.requires_grad = True
 
-     def forward(self, source_text_list: List[str], batched_graph, label_summaries: List[str], **kwargs):
+     def forward(self, source_text_list: List[str], batched_graph, 
+                 label_summaries: List[str], cov_lambda, **kwargs):
           """
           Args:
                source_text_list (List[str]): A list of long concatenated source documents string.
@@ -228,12 +229,13 @@ class JointOrchestratorwithPrefix(nn.Module):
           labels = self.tokenizer(
                label_summaries, return_tensors="pt", padding=True, truncation=True
           ).input_ids.to(self.device)
-
+          
           outputs = self.custom_t5(
                inputs_embeds=source_embeds,
                attention_mask=source_mask,
                prefix_embeds=prefix_embeds,
                labels=labels,
+               cov_lambda=cov_lambda,
                **kwargs
           )
 
