@@ -206,11 +206,6 @@ class CustomT5WithPrefix(T5ForConditionalGeneration):
                cov_loss = calculate_coverage_loss(avg_cross_attentions)
                loss = ce_loss + cov_lambda * cov_loss
                
-               ####33test
-               cov = cov_lambda * cov_loss.item()
-               print(f"loss: {cov_loss:.4f}, {ce_loss.item():.4f} + {cov:.4f} = {loss.item():.4f}; {cov / ce_loss:.2f}")
-               #################
-
                outputs.loss = loss
           
           return outputs
