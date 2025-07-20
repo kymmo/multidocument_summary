@@ -207,7 +207,8 @@ class CustomT5WithPrefix(T5ForConditionalGeneration):
                loss = ce_loss + cov_lambda * cov_loss
                
                ####33test
-               print(f"loss: {ce_loss.item():.4f} + {cov_lambda * cov_loss.item():.4f} = {loss.item():.4f}")
+               cov = cov_lambda * cov_loss.item()
+               print(f"loss: {ce_loss.item():.4f} + {cov:.4f} = {loss.item():.4f}; {cov / ce_loss:.2f}")
                #################
 
                outputs.loss = loss
