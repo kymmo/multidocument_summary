@@ -237,11 +237,11 @@ def run_joint_training(
      
 def adjust_cov_lambda(epoch, total_epochs):
      if total_epochs <= 4:
-          return 0.01
+          return 0.2
           
      if epoch < total_epochs // 4:
-          return 0.01
+          return 0.2
      elif epoch < total_epochs // 2:
-          return 0.02
+          return 0.4
      else:
-          return 0.03
+          return 0.5

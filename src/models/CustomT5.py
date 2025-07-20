@@ -208,7 +208,7 @@ class CustomT5WithPrefix(T5ForConditionalGeneration):
                
                ####33test
                cov = cov_lambda * cov_loss.item()
-               print(f"loss: {ce_loss.item():.4f} + {cov:.4f} = {loss.item():.4f}; {cov / ce_loss:.2f}")
+               print(f"loss: {cov_loss:.4f}, {ce_loss.item():.4f} + {cov:.4f} = {loss.item():.4f}; {cov / ce_loss:.2f}")
                #################
 
                outputs.loss = loss
@@ -218,13 +218,19 @@ class CustomT5WithPrefix(T5ForConditionalGeneration):
 def calculate_coverage_loss(attentions: torch.Tensor) -> torch.Tensor:
      batch_size, tgt_len, src_len = attentions.shape
      
+     if tgt_len == 0 or src_len == 0:
+          return torch.tensor(0.0, device=attentions.device, dtype=torch.float)
+     
      coverage = torch.zeros(batch_size, src_len, device=attentions.device)
-     total_penalty = torch.zeros(batch_size, device=attentions.device)
+     total_penalty = 0.0
 
      for t in range(tgt_len):
           a_t = attentions[:, t, :]
-          penalty_t = torch.sum(torch.minimum(coverage, a_t), dim=1)
-          total_penalty = total_penalty + penalty_t
-          coverage = coverage + a_t
+          current_penalty = torch.minimum(coverage, a_t)
+          total_penalty = total_penalty + current_penalty.sum()
           
-     return total_penalty.mean()
+          coverage = coverage + a_t
+     
+     num_elements = batch_size * tgt_len
+     
+     return total_penalty / num_elements
