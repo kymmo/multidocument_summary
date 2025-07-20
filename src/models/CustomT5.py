@@ -198,10 +198,12 @@ class CustomT5WithPrefix(T5ForConditionalGeneration):
           
           if cov_lambda is not None and labels is not None:
                ce_loss = outputs.loss  # token-level cross-entropy
-               attn_layers = outputs.decoder_attentions
-               last_layer_attn = attn_layers[-1].mean(dim=1)  # [batch, tgt_len, src_len]
+               
+               cross_attentions_last_layer = outputs.cross_attentions[-1]
 
-               cov_loss = calculate_coverage_loss(last_layer_attn)
+               # [batch_size, target_length, source_length]
+               avg_cross_attentions = torch.mean(cross_attentions_last_layer, dim=1)
+               cov_loss = calculate_coverage_loss(avg_cross_attentions)
                loss = ce_loss + cov_lambda * cov_loss
                
                ####33test
@@ -212,17 +214,16 @@ class CustomT5WithPrefix(T5ForConditionalGeneration):
           
           return outputs
      
-     
-def calculate_coverage_loss(attentions, epsilon=1e-8):
+def calculate_coverage_loss(attentions: torch.Tensor) -> torch.Tensor:
      batch_size, tgt_len, src_len = attentions.shape
-     coverage = torch.zeros(batch_size, src_len, device=attentions.device)
      
-     cov_loss = 0.0
+     coverage = torch.zeros(batch_size, src_len, device=attentions.device)
+     total_penalty = torch.zeros(batch_size, device=attentions.device)
+
      for t in range(tgt_len):
           a_t = attentions[:, t, :]
-          penalty = torch.exp(-coverage) * a_t
-          cov_loss += penalty.sum(dim=1) / (t + 1)
-     
-     cov_loss = cov_loss.mean() / (tgt_len + epsilon)
-     
-     return cov_loss
+          penalty_t = torch.sum(torch.minimum(coverage, a_t), dim=1)
+          total_penalty = total_penalty + penalty_t
+          coverage = coverage + a_t
+          
+     return total_penalty.mean()

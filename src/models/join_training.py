@@ -242,6 +242,6 @@ def adjust_cov_lambda(epoch, total_epochs):
      if epoch < total_epochs // 4:
           return 0.01
      elif epoch < total_epochs // 2:
-          return 0.03
+          return 0.02
      else:
-          return 0.05
+          return 0.03
