@@ -197,6 +197,9 @@ class JointOrchestratorwithPrefix(nn.Module):
           for param in self.prefix_encoder.parameters():
                param.requires_grad = True
                
+          for param in self.long_text_encoder.parameters():
+               param.requires_grad = True
+               
           # Unfreeze top layers of T5
           for layer in self.custom_t5.encoder.block[-2:]:
                for param in layer.parameters():
@@ -220,7 +223,6 @@ class JointOrchestratorwithPrefix(nn.Module):
                print("[WARNING] batch_source_embs contains NaN/Inf!")
           
           batch_source_embs = batch_source_embs.to(self.device)
-          batch_source_embs.requires_grad_(True)
           batch_source_mask = batch_source_mask.to(self.device)
           
           sentence_graph_embs, _ = self.gnn(batched_graph)
