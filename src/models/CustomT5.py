@@ -176,9 +176,6 @@ class CustomT5WithPrefix(T5ForConditionalGeneration):
 
                if prefix_embeds is not None:
                     prefix_length = prefix_embeds.shape[1]
-                    if prefix_embeds.shape[0] != batch_size:
-                         prefix_embeds = prefix_embeds.expand(batch_size, -1, -1)
-                    
                     inputs_embeds = torch.cat([prefix_embeds, inputs_embeds], dim=1)
                     
                     if attention_mask is not None:

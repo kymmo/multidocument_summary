@@ -172,7 +172,7 @@ class JointOrchestratorwithPrefix(nn.Module):
           self.prefix_encoder = PrefixEncoder(t5_config, gnn_config['out_size'], prefix_length)
           
           self.long_text_encoder = LongTextEncoderEnhanced(t5_model_name=t5_model_name, tokenizer=t5_tokenizer,
-                                                            chunk_size=400, target_len=512, stride=400)
+                                                            chunk_size=400, target_len=512, stride=256)
           
           self.tokenizer = t5_tokenizer
           
@@ -209,19 +209,19 @@ class JointOrchestratorwithPrefix(nn.Module):
                  label_summaries: List[str], cov_lambda, **kwargs):
           """
           Args:
-               source_text_list (List[str]): A list of long concatenated source documents string.
+               source_text_list (List[str]): A list of long concatenated source documents string. one elmenet for one sample.
                batched_graph (torch_geometric.data.HeteroData): The batched graph.
                label_summaries (List[str]): The list of target summary strings.
           """
           batched_graph = batched_graph.to(self.device)
           
-          source_embeds, source_mask = self.long_text_encoder(source_text_list)
-          if torch.isnan(source_embeds).any() or torch.isinf(source_embeds).any():
-               print("[WARNING] source_embeds contains NaN/Inf!")
+          batch_source_embs, batch_source_mask = self.long_text_encoder(source_text_list)
+          if torch.isnan(batch_source_embs).any() or torch.isinf(batch_source_embs).any():
+               print("[WARNING] batch_source_embs contains NaN/Inf!")
           
-          source_embeds = source_embeds.to(self.device)
-          source_embeds.requires_grad_(True)
-          source_mask = source_mask.to(self.device)
+          batch_source_embs = batch_source_embs.to(self.device)
+          batch_source_embs.requires_grad_(True)
+          batch_source_mask = batch_source_mask.to(self.device)
           
           sentence_graph_embs, _ = self.gnn(batched_graph)
           prefix_embeds = self.prefix_encoder(sentence_graph_embs, batched_graph['sentence'].batch)
@@ -231,8 +231,8 @@ class JointOrchestratorwithPrefix(nn.Module):
           ).input_ids.to(self.device)
           
           outputs = self.custom_t5(
-               inputs_embeds=source_embeds,
-               attention_mask=source_mask,
+               inputs_embeds=batch_source_embs,
+               attention_mask=batch_source_mask,
                prefix_embeds=prefix_embeds,
                labels=labels,
                cov_lambda=cov_lambda,
@@ -247,17 +247,17 @@ class JointOrchestratorwithPrefix(nn.Module):
           
           batched_graph = batched_graph.to(self.device)
           
-          source_embeds, source_mask = self.long_text_encoder(source_text_list)
-          source_embeds = source_embeds.to(self.device)
-          source_mask = source_mask.to(self.device)
+          batch_source_embs, batch_source_mask = self.long_text_encoder(source_text_list)
+          batch_source_embs = batch_source_embs.to(self.device)
+          batch_source_mask = batch_source_mask.to(self.device)
           
           sentence_graph_embs, _ = self.gnn(batched_graph)
           prefix_embeds = self.prefix_encoder(sentence_graph_embs, batched_graph['sentence'].batch)
           
-          full_input_embeds = torch.cat([prefix_embeds.expand(source_embeds.shape[0], -1, -1), source_embeds], dim=1)
+          full_input_embeds = torch.cat([prefix_embeds.expand(batch_source_embs.shape[0], -1, -1), batch_source_embs], dim=1)
           full_attention_mask = torch.cat([
-               torch.ones(prefix_embeds.shape[0], prefix_embeds.shape[1], device=self.device).expand(source_mask.shape[0], -1), 
-               source_mask
+               torch.ones(prefix_embeds.shape[0], prefix_embeds.shape[1], device=self.device).expand(batch_source_mask.shape[0], -1), 
+               batch_source_mask
           ], dim=1)
           
           generated_ids = self.custom_t5.generate(
