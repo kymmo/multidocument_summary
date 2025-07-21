@@ -30,7 +30,7 @@ os.environ["TOKENIZERS_PARALLELISM"] = "false"
 NLP_MODEL_NAME = "en_core_web_lg"
 SENT_MODEL_NAME = "all-mpnet-base-v2"
 WORKER_NLP_BATCH_SIZE = 100 # for spacy docs process
-WORKER_TASK_BATCH_SIZE = 20 # for each subprocess
+WORKER_TASK_BATCH_SIZE = 10 # for each subprocess
 
 # These will hold the models loaded *within each subprocess*
 _subprocess_coref_nlp = None
@@ -166,195 +166,188 @@ def process_batch(batch_input):
 
 
      batch_results_by_sample = []
-     try:
-          samples_in_batch = defaultdict(list)
-          all_doc_texts = []
-          doc_identifiers = []
+     samples_in_batch = defaultdict(list)
+     all_doc_texts = []
+     doc_identifiers = []
 
-          if not list_of_docs:
-               return []
+     if not list_of_docs:
+          return []
 
-          for i, doc_tuple in enumerate(list_of_docs):
-               try:
-                    original_idx, doc_idx, doc_text = doc_tuple
-                    if not isinstance(original_idx, int) or not isinstance(doc_idx, int) or not isinstance(doc_text, str):
-                         print(f"[WARN] Skipping invalid item in list_of_docs at index {i}: {doc_tuple}")
-                         continue
-                    
-                    compressed_text = compact_text(doc_text, eps=0.50, min_samples=2, EMB_BATCH_SIZE=16)
-                    # compressed_text = compact_text_auto_kmeans(doc_text, EMB_BATCH_SIZE=16, min_k=1, max_k=10)
-                    all_doc_texts.append(compressed_text)
-                    doc_identifiers.append((original_idx, doc_idx))
-                    samples_in_batch[original_idx].append({'doc_idx_in_sample': doc_idx, 'batch_list_index': i})
-               except (TypeError, ValueError):
-                    traceback.print_exc()
-                    raise
+     for i, doc_tuple in enumerate(list_of_docs):
+          try:
+               original_idx, doc_idx, doc_text = doc_tuple
+               if not isinstance(original_idx, int) or not isinstance(doc_idx, int) or not isinstance(doc_text, str):
+                    print(f"[WARN] Skipping invalid item in list_of_docs at index {i}: {doc_tuple}")
+                    continue
+               
+               compressed_text = compact_text(doc_text, eps=0.50, min_samples=2, EMB_BATCH_SIZE=16)
+               # compressed_text = compact_text_auto_kmeans(doc_text, EMB_BATCH_SIZE=16, min_k=1, max_k=10)
+               all_doc_texts.append(compressed_text)
+               doc_identifiers.append((original_idx, doc_idx))
+               samples_in_batch[original_idx].append({'doc_idx_in_sample': doc_idx, 'batch_list_index': i})
+          except (TypeError, ValueError):
+               traceback.print_exc()
+               raise
 
 
-          if not all_doc_texts: # all items were invalid
-               return []
+     if not all_doc_texts: # all items were invalid
+          return []
 
-          # spaCy Processing
-          processed_docs_ordered = list(_subprocess_coref_nlp.pipe(all_doc_texts, batch_size=WORKER_NLP_BATCH_SIZE))
+     # spaCy Processing
+     processed_docs_ordered = list(_subprocess_coref_nlp.pipe(all_doc_texts, batch_size=WORKER_NLP_BATCH_SIZE))
+     
+     # Keyword Extraction
+     docs_kws_scores_ordered = extract_keywords_internal(all_doc_texts)
+
+     #  Process each ORIGINAL SAMPLE group ---
+     for original_training_idx, sample_items in samples_in_batch.items():
+
+          current_sample_node_offset = 0
+          sample_word_nodeId_map = {}
+          sample_sent_nodeId_map_by_key = defaultdict(list)
+          sample_sentId_nodeId_map = {}
+          sample_token_node_map_by_doc = {}
+          sample_doc_sents_map = defaultdict(list)
+          sample_edge_data = defaultdict(list)
+
+          sample_all_sent_texts = []
+          sample_sent_index_to_node_id = []
           
-          # Keyword Extraction
-          docs_kws_scores_ordered = extract_keywords_internal(all_doc_texts)
+          # Sort items by doc_idx_in_sample to ensure consistent processing order within the sample
+          sample_items.sort(key=lambda x: x['doc_idx_in_sample'])
 
-          #  Process each ORIGINAL SAMPLE group ---
-          for original_training_idx, sample_items in samples_in_batch.items():
+          for item_info in sample_items:
+               doc_idx_in_sample = item_info['doc_idx_in_sample']
+               batch_list_index = item_info['batch_list_index'] # Index in the original all_doc_texts list
 
-               current_sample_node_offset = 0
-               sample_word_nodeId_map = {}
-               sample_sent_nodeId_map_by_key = defaultdict(list)
-               sample_sentId_nodeId_map = {}
-               sample_token_node_map_by_doc = {}
-               sample_doc_sents_map = defaultdict(list)
-               sample_edge_data = defaultdict(list)
-
-               sample_all_sent_texts = []
-               sample_sent_index_to_node_id = []
+               doc = processed_docs_ordered[batch_list_index]
+               doc_sents = list(doc.sents)
                
-               # Sort items by doc_idx_in_sample to ensure consistent processing order within the sample
-               sample_items.sort(key=lambda x: x['doc_idx_in_sample'])
+               doc_node = current_sample_node_offset
+               current_sample_node_offset += 1
+               
+               # --- Assign sentence node IDs (contiguous within doc) ---
+               doc_token_to_sample_node_list = [-1] * len(doc)
+               for sent_id_in_doc, sent_obj in enumerate(doc_sents):
+                    current_sent_node_id_in_sample = current_sample_node_offset
+                    sent_text = sent_obj.text
+                    sample_sentId_nodeId_map[(original_training_idx, doc_idx_in_sample, sent_id_in_doc)] = current_sent_node_id_in_sample
+                    sample_sent_nodeId_map_by_key[(original_training_idx, doc_idx_in_sample, sent_text)].append(current_sent_node_id_in_sample)
 
-               for item_info in sample_items:
-                    doc_idx_in_sample = item_info['doc_idx_in_sample']
-                    batch_list_index = item_info['batch_list_index'] # Index in the original all_doc_texts list
+                    for token in sent_obj:
+                         if 0 <= token.i < len(doc_token_to_sample_node_list):
+                              doc_token_to_sample_node_list[token.i] = current_sent_node_id_in_sample
 
-                    doc = processed_docs_ordered[batch_list_index]
-                    doc_sents = list(doc.sents)
+                    sample_all_sent_texts.append(sent_text)
+                    sample_sent_index_to_node_id.append(current_sent_node_id_in_sample)
                     
-                    doc_node = current_sample_node_offset
-                    current_sample_node_offset += 1
+                    # 1. Doc-Sent edge
+                    _add_edge_local(sample_edge_data, doc_node, current_sent_node_id_in_sample, "doc_sent", 1.0)
+                    sample_doc_sents_map[doc_node].append(current_sent_node_id_in_sample)
                     
-                    # --- Assign sentence node IDs (contiguous within doc) ---
-                    doc_token_to_sample_node_list = [-1] * len(doc)
-                    for sent_id_in_doc, sent_obj in enumerate(doc_sents):
-                         current_sent_node_id_in_sample = current_sample_node_offset
-                         sent_text = sent_obj.text
-                         sample_sentId_nodeId_map[(original_training_idx, doc_idx_in_sample, sent_id_in_doc)] = current_sent_node_id_in_sample
-                         sample_sent_nodeId_map_by_key[(original_training_idx, doc_idx_in_sample, sent_text)].append(current_sent_node_id_in_sample)
+                    current_sample_node_offset += 1 # Increment offset for the next sentence in the sample
 
-                         for token in sent_obj:
-                              if 0 <= token.i < len(doc_token_to_sample_node_list):
-                                   doc_token_to_sample_node_list[token.i] = current_sent_node_id_in_sample
+               sample_token_node_map_by_doc[(original_training_idx, doc_idx_in_sample)] = doc_token_to_sample_node_list
 
-                         sample_all_sent_texts.append(sent_text)
-                         sample_sent_index_to_node_id.append(current_sent_node_id_in_sample)
+               # 2. Coreference Edges
+               if doc._.coref_chains:
+                    doc_token_map = sample_token_node_map_by_doc.get((original_training_idx, doc_idx_in_sample), [])
+                    if not doc_token_map:
+                         print(f"[WARN] Sample {original_training_idx} has no coreference token mapping.")
+                         continue
+
+                    for chain in doc._.coref_chains:
+                         antecedent_node = -1
+                         try:
+                              antecedent_mention_index = chain.most_specific_mention_index
+                              antecedent_token_index = chain[antecedent_mention_index][0]
+                              if 0 <= antecedent_token_index < len(doc_token_map):
+                                   antecedent_node = doc_token_map[antecedent_token_index] # Gets SAMPLE-level node ID
+                         except IndexError:
+                              traceback.print_exc()
+                              raise
+
+                    if antecedent_node is None or antecedent_node < 0: 
+                         print(f"[Warning] Sample {original_training_idx} sentences have no antecedent. ")
+                         continue
+
+                    for mention_idx, mention in enumerate(chain):
+                         if mention_idx == antecedent_mention_index: continue
+                         pronoun_node = -1
+                         try:
+                              pronoun_token_index = mention[0]
+                              if 0 <= pronoun_token_index < len(doc_token_map):
+                                   pronoun_node = doc_token_map[pronoun_token_index] # Gets SAMPLE-level node ID
+                         except IndexError:
+                              traceback.print_exc()
+                              raise
+
+                         if pronoun_node is not None and pronoun_node >= 0 and pronoun_node != antecedent_node:
+                              _add_edge_local(sample_edge_data, pronoun_node, antecedent_node, "pronoun_antecedent", 1.0)
+
+          
+          # 3. Similarity Edges
+          similarity_edges = compute_edges_similarity_ann(sample_all_sent_texts, edge_similarity_threshold)
+          # if similarity_edges is None or len(similarity_edges) == 0:
+          #      print(f"[Warning] Sample {original_training_idx} has no similarity edges.")
+          
+          for node_i_local, node_j_local, sim_value in similarity_edges:
+               sample_level_node_i = sample_sent_index_to_node_id[node_i_local]
+               sample_level_node_j = sample_sent_index_to_node_id[node_j_local]
+               _add_edge_local(sample_edge_data, sample_level_node_i, sample_level_node_j, "similarity", weight=sim_value)
+
+
+          # --- Assign word node IDs for the ENTIRE SAMPLE ---
+          kws_scores_map = defaultdict(list)
+
+          for item_info in sample_items:
+               batch_list_index = item_info['batch_list_index']
+               if batch_list_index < len(docs_kws_scores_ordered):
+                    doc_kws_scores = docs_kws_scores_ordered[batch_list_index]
+                    for keyword, score in doc_kws_scores:
+                         kws_scores_map[keyword].append(score)
+
+          kws_scores_node_map = {}
+          phrase_matcher = PhraseMatcher(_subprocess_coref_nlp.vocab, attr='LOWER')
+          
+          for keyword, score_list in kws_scores_map.items():
+               score_avg = sum(score_list) / len(score_list) if score_list else 0.0
+               sample_word_nodeId_map[keyword] = current_sample_node_offset
+               kws_scores_node_map[keyword] = (current_sample_node_offset, score_avg) # store node ID and average score
+               
+               phrase_matcher.add(f"{keyword}",[_subprocess_coref_nlp(keyword)]) # Add keyword to matcher
+               
+               current_sample_node_offset += 1
+
+          # 4. Word-Sentence Edges for the ENTIRE SAMPLE
+          for item_info in sample_items:
+               doc_idx_in_sample = item_info['doc_idx_in_sample']
+               batch_list_index = item_info['batch_list_index']
+
+               doc = processed_docs_ordered[batch_list_index]
+               
+               matches = phrase_matcher(doc)
+               for match_id, start, end in matches:
+                    matched_keyword = _subprocess_coref_nlp.vocab.strings[match_id]
+                    if matched_keyword in kws_scores_node_map:
+                         node_id, score = kws_scores_node_map[matched_keyword]
+                         sent_id = sample_token_node_map_by_doc[(original_training_idx, doc_idx_in_sample)][start]
                          
-                         # 1. Doc-Sent edge
-                         _add_edge_local(sample_edge_data, doc_node, current_sent_node_id_in_sample, "doc_sent", 1.0)
-                         sample_doc_sents_map[doc_node].append(current_sent_node_id_in_sample)
-                         
-                         current_sample_node_offset += 1 # Increment offset for the next sentence in the sample
-
-                    sample_token_node_map_by_doc[(original_training_idx, doc_idx_in_sample)] = doc_token_to_sample_node_list
-
-                    # 2. Coreference Edges
-                    if doc._.coref_chains:
-                         doc_token_map = sample_token_node_map_by_doc.get((original_training_idx, doc_idx_in_sample), [])
-                         if not doc_token_map:
-                              print(f"[WARN] Sample {original_training_idx} has no coreference token mapping.")
-                              continue
-
-                         for chain in doc._.coref_chains:
-                              antecedent_node = -1
-                              try:
-                                   antecedent_mention_index = chain.most_specific_mention_index
-                                   antecedent_token_index = chain[antecedent_mention_index][0]
-                                   if 0 <= antecedent_token_index < len(doc_token_map):
-                                        antecedent_node = doc_token_map[antecedent_token_index] # Gets SAMPLE-level node ID
-                              except IndexError:
-                                   traceback.print_exc()
-                                   raise
-
-                         if antecedent_node is None or antecedent_node < 0: 
-                              print(f"[Warning] Sample {original_training_idx} sentences have no antecedent. ")
-                              continue
-
-                         for mention_idx, mention in enumerate(chain):
-                              if mention_idx == antecedent_mention_index: continue
-                              pronoun_node = -1
-                              try:
-                                   pronoun_token_index = mention[0]
-                                   if 0 <= pronoun_token_index < len(doc_token_map):
-                                        pronoun_node = doc_token_map[pronoun_token_index] # Gets SAMPLE-level node ID
-                              except IndexError:
-                                   traceback.print_exc()
-                                   raise
-
-                              if pronoun_node is not None and pronoun_node >= 0 and pronoun_node != antecedent_node:
-                                   _add_edge_local(sample_edge_data, pronoun_node, antecedent_node, "pronoun_antecedent", 1.0)
-
+                         _add_edge_local(sample_edge_data, node_id, sent_id, "word_sent", score)
                
-               # 3. Similarity Edges
-               similarity_edges = compute_edges_similarity_ann(sample_all_sent_texts, edge_similarity_threshold)
-               # if similarity_edges is None or len(similarity_edges) == 0:
-               #      print(f"[Warning] Sample {original_training_idx} has no similarity edges.")
-               
-               for node_i_local, node_j_local, sim_value in similarity_edges:
-                    sample_level_node_i = sample_sent_index_to_node_id[node_i_local]
-                    sample_level_node_j = sample_sent_index_to_node_id[node_j_local]
-                    _add_edge_local(sample_edge_data, sample_level_node_i, sample_level_node_j, "similarity", weight=sim_value)
 
+          batch_results_by_sample.append((
+               original_training_idx,
+               sample_word_nodeId_map,
+               sample_sent_nodeId_map_by_key,
+               sample_edge_data,
+               sample_sentId_nodeId_map,
+               sample_doc_sents_map,
+          ))
 
-               # --- Assign word node IDs for the ENTIRE SAMPLE ---
-               kws_scores_map = defaultdict(list)
-
-               for item_info in sample_items:
-                    batch_list_index = item_info['batch_list_index']
-                    if batch_list_index < len(docs_kws_scores_ordered):
-                         doc_kws_scores = docs_kws_scores_ordered[batch_list_index]
-                         for keyword, score in doc_kws_scores:
-                              kws_scores_map[keyword].append(score)
-
-               kws_scores_node_map = {}
-               phrase_matcher = PhraseMatcher(_subprocess_coref_nlp.vocab, attr='LOWER')
-               
-               for keyword, score_list in kws_scores_map.items():
-                    score_avg = sum(score_list) / len(score_list) if score_list else 0.0
-                    sample_word_nodeId_map[keyword] = current_sample_node_offset
-                    kws_scores_node_map[keyword] = (current_sample_node_offset, score_avg) # store node ID and average score
-                    
-                    phrase_matcher.add(f"{keyword}",[_subprocess_coref_nlp(keyword)]) # Add keyword to matcher
-                    
-                    current_sample_node_offset += 1
-
-               # 4. Word-Sentence Edges for the ENTIRE SAMPLE
-               for item_info in sample_items:
-                    doc_idx_in_sample = item_info['doc_idx_in_sample']
-                    batch_list_index = item_info['batch_list_index']
-
-                    doc = processed_docs_ordered[batch_list_index]
-                    
-                    matches = phrase_matcher(doc)
-                    for match_id, start, end in matches:
-                         matched_keyword = _subprocess_coref_nlp.vocab.strings[match_id]
-                         if matched_keyword in kws_scores_node_map:
-                              node_id, score = kws_scores_node_map[matched_keyword]
-                              sent_id = sample_token_node_map_by_doc[(original_training_idx, doc_idx_in_sample)][start]
-                              
-                              _add_edge_local(sample_edge_data, node_id, sent_id, "word_sent", score)
-                    
-
-               batch_results_by_sample.append((
-                    original_training_idx,
-                    sample_word_nodeId_map,
-                    sample_sent_nodeId_map_by_key,
-                    sample_edge_data,
-                    sample_sentId_nodeId_map,
-                    sample_doc_sents_map,
-               ))
-
-               del sample_word_nodeId_map, sample_sent_nodeId_map_by_key, sample_edge_data
-               del sample_sentId_nodeId_map, sample_token_node_map_by_doc, sample_doc_sents_map,
-               
-     except Exception as e:
-          pid = os.getpid()
-          print(f"[ERROR][Worker {pid}] Processing batch failed: {str(e)}")
-          traceback.print_exc()
-          return None
-
+          del sample_word_nodeId_map, sample_sent_nodeId_map_by_key, sample_edge_data
+          del sample_sentId_nodeId_map, sample_token_node_map_by_doc, sample_doc_sents_map,
+     
      return batch_results_by_sample
 
 def _add_edge_local(edge_data_dict, node1_idx, node2_idx, edge_type, weight=1.0):
@@ -592,17 +585,20 @@ def define_node_edge_opt_parallel(documents_list, edge_similarity_threshold=0.6)
      # --- Prepare tasks for parallel execution ---
      # Each task will be a batch of documents to process.
      tasks = []
-     for i in range(0, len(documents_list), WORKER_TASK_BATCH_SIZE):
-          batch = []
-          for j in range(i, min(i + WORKER_TASK_BATCH_SIZE, len(documents_list))):
-               original_training_idx = j
-               sample_docs = []
-               for doc_id, doc in enumerate(documents_list[j]):
-                    sample_docs.append((original_training_idx, doc_id, doc[0]))
-                    
-               batch.append((sample_docs, edge_similarity_threshold))
-          if batch:
-               tasks.append(batch)
+     len_docs = len(documents_list)
+
+     for i in range(0, len_docs, WORKER_TASK_BATCH_SIZE):
+          end_idx = min(i + WORKER_TASK_BATCH_SIZE, len_docs)
+
+          batch = [
+               (
+                    [(j, doc_id, doc[0]) for doc_id, doc in enumerate(documents_list[j])],
+                    edge_similarity_threshold
+               )
+               for j in range(i, end_idx)
+          ]
+
+          tasks.append(batch)
 
      cpu_num = auto_workers()
      all_results_flat = [] # Store results from all workers
@@ -637,7 +633,6 @@ def define_node_edge_opt_parallel(documents_list, edge_similarity_threshold=0.6)
                try:
                     batch_result = future.result()
                     if batch_result is not None:
-                         # batch_result is a list of tuples for each sample in the batch
                          all_results_flat.extend(batch_result)
                     else:
                          print("[WARN] A worker batch failed processing.")
